@@ -131,6 +131,8 @@ enum Command {
     PointerSpeed(f64),
     /// HDR on the external displays that can show it.
     Hdr(bool),
+    /// Windows' sound plays on the Mac.
+    Sound(bool),
     Forget(bool),
     Host(Option<String>),
     /// Publishes the status now, for a view that just appeared.
@@ -161,6 +163,7 @@ pub extern "C" fn strait_command(json: *const c_char) {
         Command::Focus(to) => engine.core.lock().unwrap().focus(to == "windows", true),
         Command::PointerSpeed(speed) => engine.core.lock().unwrap().set_pointer_speed(speed),
         Command::Hdr(on) => engine.core.lock().unwrap().set_hdr(on),
+        Command::Sound(on) => engine.core.lock().unwrap().set_sound(on),
         Command::Forget(true) => engine.core.lock().unwrap().forget(&engine.peer_path),
         Command::Host(host) => engine.core.lock().unwrap().set_host(host.filter(|h| !h.trim().is_empty())),
         Command::Refresh(true) => engine.core.lock().unwrap().publish(),

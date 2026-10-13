@@ -32,6 +32,7 @@ struct Status: Decodable, Equatable {
     var secureInput: Bool
     var swapCommandControl: Bool
     var pointerSpeed: Double
+    var sound: Bool
     var thisMac: String
     var pairedPc: String?
     var problem: String?
@@ -101,5 +102,6 @@ final class Engine: ObservableObject {
     func swapCommandControl(_ on: Bool) { send(["swapCommandControl": on]) }
     func pointerSpeed(_ speed: Double) { send(["pointerSpeed": speed]) }
     func hdr(_ on: Bool) { send(["hdr": on]) }
+    func sound(_ on: Bool) { send(["sound": on]) }
     func forgetPC() { send(["forget": true]) }
 }

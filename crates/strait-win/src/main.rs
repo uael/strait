@@ -18,6 +18,8 @@ mod logfile;
 #[cfg(windows)]
 mod net;
 #[cfg(windows)]
+mod sound;
+#[cfg(windows)]
 mod ui;
 
 #[cfg(not(windows))]

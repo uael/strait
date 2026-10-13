@@ -1,7 +1,8 @@
 //! Messages exchanged between the Mac and Windows, and their byte encoding.
 //!
-//! `Input` travels in UDP datagrams from the Mac to Windows: losing one only
-//! loses a motion delta or a transition that the next `State` repairs.
+//! `Datagram` travels over UDP. From the Mac it carries input: losing one
+//! only loses a motion delta or a transition that the next `State` repairs.
+//! From Windows it carries pongs and sound, where a lost one is a short gap.
 //! `Control` travels over the TCP session, which keeps order and delivery.
 //! All integers are little-endian.
 
@@ -51,8 +52,12 @@ impl Button {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Input {
+/// Stereo frames in one `Sound` datagram: 5 ms at 48 kHz, which keeps the
+/// datagram under a typical 1500-byte MTU.
+pub const SOUND_FRAMES: usize = 240;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Datagram {
     /// Pointer motion in device counts, before any acceleration.
     Motion { dx: i32, dy: i32 },
     Button { button: Button, down: bool },
@@ -66,6 +71,9 @@ pub enum Input {
     /// Round-trip probe; Windows echoes `t` back in a `Pong` datagram.
     Ping { t: u64 },
     Pong { t: u64 },
+    /// What Windows plays, as interleaved 16-bit stereo samples at `rate` Hz,
+    /// at most `SOUND_FRAMES` frames.
+    Sound { rate: u32, samples: Vec<i16> },
 }
 
 /// Screen edges of the Windows desktop, as a bit set.
@@ -129,6 +137,8 @@ pub enum Control {
     /// The monitor changes the half that shows the input the command
     /// arrives on, so only Windows can give its own half back to the Mac.
     Select(u16),
+    /// The Mac asks Windows to send, or stop sending, what it plays.
+    Sound(bool),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,6 +207,10 @@ impl<'a> Reader<'a> {
         Ok(u64::from_le_bytes(self.array()?))
     }
 
+    fn u32(&mut self) -> Result<u32, DecodeError> {
+        Ok(u32::from_le_bytes(self.array()?))
+    }
+
     fn f32(&mut self) -> Result<f32, DecodeError> {
         Ok(f32::from_le_bytes(self.array()?))
     }
@@ -214,51 +228,65 @@ fn enum_from<T: Copy>(all: &[T], v: u8) -> Result<T, DecodeError> {
     all.get(usize::from(v)).copied().ok_or(DecodeError::Value(v))
 }
 
-impl Input {
+impl Datagram {
     pub fn encode(&self, out: &mut Vec<u8>) {
         match *self {
-            Input::Motion { dx, dy } => {
+            Datagram::Motion { dx, dy } => {
                 out.push(0);
                 out.extend_from_slice(&dx.to_le_bytes());
                 out.extend_from_slice(&dy.to_le_bytes());
             }
-            Input::Button { button, down } => out.extend_from_slice(&[1, button as u8, down as u8]),
-            Input::Wheel { dx, dy } => {
+            Datagram::Button { button, down } => out.extend_from_slice(&[1, button as u8, down as u8]),
+            Datagram::Wheel { dx, dy } => {
                 out.push(2);
                 out.extend_from_slice(&dx.to_le_bytes());
                 out.extend_from_slice(&dy.to_le_bytes());
             }
-            Input::Key { usage, down } => out.extend_from_slice(&[3, usage, down as u8]),
-            Input::State { keys, buttons } => {
+            Datagram::Key { usage, down } => out.extend_from_slice(&[3, usage, down as u8]),
+            Datagram::State { keys, buttons } => {
                 out.push(4);
                 out.extend_from_slice(&keys.0);
                 out.push(buttons);
             }
-            Input::Ping { t } => {
+            Datagram::Ping { t } => {
                 out.push(5);
                 out.extend_from_slice(&t.to_le_bytes());
             }
-            Input::Pong { t } => {
+            Datagram::Pong { t } => {
                 out.push(6);
                 out.extend_from_slice(&t.to_le_bytes());
+            }
+            Datagram::Sound { rate, ref samples } => {
+                out.push(7);
+                out.extend_from_slice(&rate.to_le_bytes());
+                out.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
             }
         }
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Input, DecodeError> {
+    pub fn decode(bytes: &[u8]) -> Result<Datagram, DecodeError> {
         let mut r = Reader(bytes);
-        let input = match r.u8()? {
-            0 => Input::Motion { dx: r.i32()?, dy: r.i32()? },
-            1 => Input::Button { button: enum_from(&Button::ALL, r.u8()?)?, down: r.bool()? },
-            2 => Input::Wheel { dx: r.i32()?, dy: r.i32()? },
-            3 => Input::Key { usage: r.u8()?, down: r.bool()? },
-            4 => Input::State { keys: Keys(r.array()?), buttons: r.u8()? },
-            5 => Input::Ping { t: r.u64()? },
-            6 => Input::Pong { t: r.u64()? },
+        let datagram = match r.u8()? {
+            0 => Datagram::Motion { dx: r.i32()?, dy: r.i32()? },
+            1 => Datagram::Button { button: enum_from(&Button::ALL, r.u8()?)?, down: r.bool()? },
+            2 => Datagram::Wheel { dx: r.i32()?, dy: r.i32()? },
+            3 => Datagram::Key { usage: r.u8()?, down: r.bool()? },
+            4 => Datagram::State { keys: Keys(r.array()?), buttons: r.u8()? },
+            5 => Datagram::Ping { t: r.u64()? },
+            6 => Datagram::Pong { t: r.u64()? },
+            7 => {
+                let rate = r.u32()?;
+                let bytes = r.rest();
+                // Whole stereo frames only.
+                if bytes.len() % 4 != 0 {
+                    return Err(DecodeError::Truncated);
+                }
+                Datagram::Sound { rate, samples: bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect() }
+            }
             t => return Err(DecodeError::Tag(t)),
         };
         r.end()?;
-        Ok(input)
+        Ok(datagram)
     }
 }
 
@@ -289,6 +317,7 @@ impl Control {
                 out.push(6);
                 out.extend_from_slice(&source.to_le_bytes());
             }
+            Control::Sound(on) => out.extend_from_slice(&[7, *on as u8]),
         }
     }
 
@@ -305,6 +334,7 @@ impl Control {
             4 => Control::Clipboard(Clip::Png(r.rest().to_vec())),
             5 => Control::Show(enum_from(&Preset::ALL, r.u8()?)?),
             6 => Control::Select(u16::from_le_bytes(r.array()?)),
+            7 => Control::Sound(r.bool()?),
             t => return Err(DecodeError::Tag(t)),
         };
         r.end()?;
@@ -316,13 +346,15 @@ impl Control {
 mod tests {
     use super::*;
 
-    fn input_round_trip(input: Input) {
+    fn datagram_round_trip(input: Datagram) {
         let mut buf = Vec::new();
         input.encode(&mut buf);
-        assert_eq!(Input::decode(&buf), Ok(input));
-        assert_eq!(Input::decode(&buf[..buf.len() - 1]), Err(DecodeError::Truncated));
-        buf.push(0);
-        assert_eq!(Input::decode(&buf), Err(DecodeError::Trailing));
+        assert_eq!(Datagram::decode(&buf), Ok(input.clone()));
+        assert_eq!(Datagram::decode(&buf[..buf.len() - 1]), Err(DecodeError::Truncated));
+        if !matches!(input, Datagram::Sound { .. }) {
+            buf.push(0);
+            assert_eq!(Datagram::decode(&buf), Err(DecodeError::Trailing));
+        }
     }
 
     fn control_round_trip(control: Control) {
@@ -337,15 +369,16 @@ mod tests {
         keys.set(0x04, true);
         keys.set(0xE7, true);
         for input in [
-            Input::Motion { dx: -3, dy: 70000 },
-            Input::Button { button: Button::Forward, down: true },
-            Input::Wheel { dx: 120, dy: -240 },
-            Input::Key { usage: 0x2C, down: false },
-            Input::State { keys, buttons: Button::Left.bit() | Button::Back.bit() },
-            Input::Ping { t: u64::MAX - 1 },
-            Input::Pong { t: 7 },
+            Datagram::Motion { dx: -3, dy: 70000 },
+            Datagram::Button { button: Button::Forward, down: true },
+            Datagram::Wheel { dx: 120, dy: -240 },
+            Datagram::Key { usage: 0x2C, down: false },
+            Datagram::State { keys, buttons: Button::Left.bit() | Button::Back.bit() },
+            Datagram::Ping { t: u64::MAX - 1 },
+            Datagram::Pong { t: 7 },
+            Datagram::Sound { rate: 48_000, samples: vec![i16::MIN, -1, 0, i16::MAX] },
         ] {
-            input_round_trip(input);
+            datagram_round_trip(input);
         }
     }
 
@@ -359,6 +392,7 @@ mod tests {
             Control::Clipboard(Clip::Png(vec![0x89, b'P', b'N', b'G'])),
             Control::Show(Preset::WindowsFull),
             Control::Select(0x0F),
+            Control::Sound(true),
         ] {
             control_round_trip(control);
         }
@@ -366,11 +400,11 @@ mod tests {
 
     #[test]
     fn rejects_bad_fields() {
-        assert_eq!(Input::decode(&[9]), Err(DecodeError::Tag(9)));
-        assert_eq!(Input::decode(&[1, 5, 0]), Err(DecodeError::Value(5)));
-        assert_eq!(Input::decode(&[3, 4, 2]), Err(DecodeError::Value(2)));
+        assert_eq!(Datagram::decode(&[9]), Err(DecodeError::Tag(9)));
+        assert_eq!(Datagram::decode(&[1, 5, 0]), Err(DecodeError::Value(5)));
+        assert_eq!(Datagram::decode(&[3, 4, 2]), Err(DecodeError::Value(2)));
         assert_eq!(Control::decode(&[3, 0xFF]), Err(DecodeError::Utf8));
-        assert_eq!(Input::decode(&[]), Err(DecodeError::Truncated));
+        assert_eq!(Datagram::decode(&[]), Err(DecodeError::Truncated));
     }
 
     #[test]

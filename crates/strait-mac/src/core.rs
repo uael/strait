@@ -13,7 +13,7 @@ use strait::keymap::swap_command_control;
 use strait::layout::{Layout, Point};
 use strait::route::{Router, Target};
 use strait::session::Session;
-use strait::wire::{Button, Clip, Control, Edge, Input, Keys, Preset};
+use strait::wire::{Button, Clip, Control, Edge, Datagram, Keys, Preset};
 
 use crate::sys::*;
 use crate::{ddc, screens, settings::Settings};
@@ -37,10 +37,10 @@ impl Uplink {
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 
-    pub fn send(&self, input: Input) {
+    pub fn send(&self, input: Datagram) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         // A full socket buffer drops the datagram, like a lost packet.
-        let _ = self.socket.send(&self.session.seal_input(seq, &input));
+        let _ = self.socket.send(&self.session.seal_datagram(seq, &input));
     }
 }
 
@@ -82,6 +82,8 @@ pub struct Status {
     pub secure_input: bool,
     pub swap_command_control: bool,
     pub pointer_speed: f64,
+    /// Windows' sound plays on the Mac.
+    pub sound: bool,
     pub this_mac: String,
     pub paired_pc: Option<String>,
     pub problem: Option<String>,
@@ -153,6 +155,7 @@ impl Core {
             secure_input: false,
             swap_command_control: settings.swap_command_control,
             pointer_speed: settings.pointer_speed,
+            sound: settings.sound,
             this_mac,
             paired_pc,
             problem: None,
@@ -206,6 +209,7 @@ impl Core {
 
     pub fn link_up(&mut self, uplink: Arc<Uplink>, host: String, fingerprint: String) {
         self.uplink = Some(uplink);
+        self.send_control(Control::Sound(self.settings.sound));
         self.set_status(|s| s.link = Link::Connected { host, fingerprint });
     }
 
@@ -319,7 +323,7 @@ impl Core {
         if target == Target::Windows
             && let Some(u) = &self.uplink
         {
-            u.send(Input::Key { usage: self.out(usage), down });
+            u.send(Datagram::Key { usage: self.out(usage), down });
         }
         target != Target::Mac
     }
@@ -334,7 +338,7 @@ impl Core {
         if target == Target::Windows
             && let Some(u) = &self.uplink
         {
-            u.send(Input::Button { button, down });
+            u.send(Datagram::Button { button, down });
         }
         target != Target::Mac
     }
@@ -346,7 +350,7 @@ impl Core {
         if let Some(u) = &self.uplink
             && (dx != 0 || dy != 0)
         {
-            u.send(Input::Wheel { dx, dy });
+            u.send(Datagram::Wheel { dx, dy });
         }
         true
     }
@@ -378,7 +382,7 @@ impl Core {
         let (ix, iy) = (rx.trunc(), ry.trunc());
         self.motion_rest = (rx - ix, ry - iy);
         if ix != 0.0 || iy != 0.0 {
-            u.send(Input::Motion { dx: ix as i32, dy: iy as i32 });
+            u.send(Datagram::Motion { dx: ix as i32, dy: iy as i32 });
         }
     }
 
@@ -514,6 +518,13 @@ impl Core {
                 core.lock().unwrap().set_status(|s| s.hdr = screens::hdr_on());
             }
         });
+    }
+
+    pub fn set_sound(&mut self, on: bool) {
+        self.settings.sound = on;
+        self.settings.save(&self.settings_path);
+        self.send_control(Control::Sound(on));
+        self.set_status(|s| s.sound = on);
     }
 
     pub fn set_swap(&mut self, on: bool) {

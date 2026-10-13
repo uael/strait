@@ -2,14 +2,14 @@
 //! back when the pointer leaves through an exit edge.
 
 use std::io::{self, BufReader, BufWriter};
-use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use strait::session::{Identity, Session, fingerprint};
-use strait::wire::{Clip, Control, Edge, Edges, Input};
+use strait::wire::{Clip, Control, Edge, Edges, Datagram};
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CURSOR_SHOWING, CURSOR_SUPPRESSED, CURSORINFO, GetClipCursor, GetCursorInfo, GetCursorPos, GetSystemMetrics,
@@ -48,6 +48,10 @@ struct Link {
     tx: Sender<Control>,
     mac: IpAddr,
     stream: TcpStream,
+    /// Where the Mac's datagrams come from, and so where replies go.
+    udp: Option<SocketAddr>,
+    /// Datagrams sent to the Mac in this session; each one's sequence.
+    sent: u64,
 }
 
 /// Whether Windows has input, and what it holds.
@@ -67,6 +71,9 @@ pub struct Net {
     link: Mutex<Option<Link>>,
     focus: Mutex<Focus>,
     notify: Box<dyn Fn(Event) + Send + Sync>,
+    socket: OnceLock<UdpSocket>,
+    /// The capture of Windows' sound, while the Mac asks for it.
+    sound: Mutex<Option<crate::sound::Capture>>,
 }
 
 impl Net {
@@ -85,6 +92,8 @@ impl Net {
                 last_input: Instant::now(),
             }),
             notify: Box::new(notify),
+            socket: OnceLock::new(),
+            sound: Mutex::new(None),
         });
         let n = net.clone();
         std::thread::spawn(move || n.listen());
@@ -111,6 +120,17 @@ impl Net {
     pub fn send(&self, control: Control) {
         if let Some(link) = &*self.link.lock().unwrap() {
             let _ = link.tx.send(control);
+        }
+    }
+
+    /// Sends a datagram to the Mac, once it has sent one to learn its address from.
+    fn send_datagram(&self, datagram: &Datagram) {
+        let (Some(socket), Some(link)) = (self.socket.get(), &mut *self.link.lock().unwrap()) else { return };
+        let Some(to) = link.udp else { return };
+        let sealed = link.session.seal_datagram(link.sent, datagram);
+        link.sent += 1;
+        if let Err(e) = socket.send_to(&sealed, to) {
+            log!("send datagram to the Mac: {e}");
         }
     }
 
@@ -174,7 +194,7 @@ impl Net {
             }
         });
         let mut reader = session.reader(BufReader::new(stream.try_clone()?));
-        self.drop_link(Some(Link { id, session, tx, mac, stream }));
+        self.drop_link(Some(Link { id, session, tx, mac, stream, udp: None, sent: 0 }));
         log!("Mac {fp} connected from {mac}");
         (self.notify)(Event::Status(Status::Connected { mac: mac.to_string(), fingerprint: fp }));
         let net = self.clone();
@@ -190,6 +210,7 @@ impl Net {
             if link.as_ref().is_some_and(|l| l.id == id) {
                 *link = None;
                 drop(link);
+                *net.sound.lock().unwrap() = None;
                 net.leave();
                 (net.notify)(Event::Status(Status::Waiting));
             }
@@ -203,6 +224,7 @@ impl Net {
         if let Some(old) = old {
             let _ = old.stream.shutdown(Shutdown::Both);
         }
+        *self.sound.lock().unwrap() = None;
         self.leave();
     }
 
@@ -212,7 +234,7 @@ impl Net {
         focus.held.release_all();
     }
 
-    fn control(&self, control: Control) {
+    fn control(self: &Arc<Self>, control: Control) {
         match control {
             Control::Enter { x, y, exits, locked } => {
                 let screen = virtual_screen();
@@ -240,6 +262,15 @@ impl Net {
                     }
                 });
             }
+            Control::Sound(on) => {
+                let mut sound = self.sound.lock().unwrap();
+                if on && sound.is_none() {
+                    let net = self.clone();
+                    *sound = Some(crate::sound::Capture::start(Arc::new(move |d| net.send_datagram(&d))));
+                } else if !on {
+                    *sound = None;
+                }
+            }
             Control::Exit { .. } | Control::Show(_) => log!("unexpected control from the Mac: {control:?}"),
         }
     }
@@ -254,8 +285,8 @@ impl Net {
             }
         };
         socket.set_read_timeout(Some(Duration::from_millis(100))).expect("non-zero timeout");
+        let socket = self.socket.get_or_init(|| socket);
         let mut buf = [0u8; 2048];
-        let mut pong_seq = (0u64, 0u64); // (link id, next sequence)
         loop {
             let received = socket.recv_from(&mut buf);
             let mut focus = self.focus.lock().unwrap();
@@ -279,7 +310,7 @@ impl Net {
             if from.ip() != mac {
                 continue;
             }
-            let (seq, input) = match session.open_input(&buf[..n]) {
+            let (seq, input) = match session.open_datagram(&buf[..n]) {
                 Ok(d) => d,
                 Err(e) => {
                     log!("bad datagram from {from}: {e}");
@@ -296,22 +327,18 @@ impl Net {
             }
             focus.last_seq = Some(seq);
             focus.last_input = Instant::now();
-            if let Input::Ping { t } = input {
-                if pong_seq.0 != id {
-                    pong_seq = (id, 0);
-                }
-                let reply = session.seal_input(pong_seq.1, &Input::Pong { t });
-                pong_seq.1 += 1;
-                if let Err(e) = socket.send_to(&reply, from) {
-                    log!("send pong: {e}");
-                }
+            if let Some(link) = self.link.lock().unwrap().as_mut().filter(|l| l.id == id) {
+                link.udp = Some(from);
+            }
+            if let Datagram::Ping { t } = input {
+                self.send_datagram(&Datagram::Pong { t });
                 continue;
             }
             if !focus.active {
                 continue;
             }
             match input {
-                Input::Motion { dx, dy } => {
+                Datagram::Motion { dx, dy } => {
                     inject::motion(dx, dy);
                     if let Some((edge, along)) = exit_reached(&focus, dx, dy) {
                         focus.active = false;
@@ -319,11 +346,11 @@ impl Net {
                         let _ = tx.send(Control::Exit { edge, along });
                     }
                 }
-                Input::Button { button, down } => focus.held.button(button, down),
-                Input::Wheel { dx, dy } => inject::wheel(dx, dy),
-                Input::Key { usage, down } => focus.held.key(usage, down),
-                Input::State { keys, buttons } => focus.held.reconcile(keys, buttons),
-                Input::Ping { .. } | Input::Pong { .. } => {}
+                Datagram::Button { button, down } => focus.held.button(button, down),
+                Datagram::Wheel { dx, dy } => inject::wheel(dx, dy),
+                Datagram::Key { usage, down } => focus.held.key(usage, down),
+                Datagram::State { keys, buttons } => focus.held.reconcile(keys, buttons),
+                Datagram::Ping { .. } | Datagram::Pong { .. } | Datagram::Sound { .. } => {}
             }
         }
     }

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use strait::keymap::usage_of_mac_key;
 use strait::session::{Identity, Session, fingerprint};
-use strait::wire::{Control, Edges, Input};
+use strait::wire::{Control, Edges, Datagram};
 
 /// macOS key code of each lowercase letter, digit and space, in ASCII order.
 fn mac_key(c: char) -> Option<u16> {
@@ -41,18 +41,18 @@ fn main() -> std::io::Result<()> {
     udp.connect((host.as_str(), strait::PORT))?;
     udp.set_read_timeout(Some(Duration::from_secs(1)))?;
     let mut seq = 0u64;
-    let mut send = |input: Input| {
-        udp.send(&session.seal_input(seq, &input)).expect("send datagram");
+    let mut send = |input: Datagram| {
+        udp.send(&session.seal_datagram(seq, &input)).expect("send datagram");
         seq += 1;
     };
 
     let start = Instant::now();
     let mut rtts = Vec::new();
     for _ in 0..20 {
-        send(Input::Ping { t: start.elapsed().as_nanos() as u64 });
+        send(Datagram::Ping { t: start.elapsed().as_nanos() as u64 });
         let mut buf = [0u8; 128];
         if let Ok(n) = udp.recv(&mut buf)
-            && let Ok((_, Input::Pong { t })) = session.open_input(&buf[..n])
+            && let Ok((_, Datagram::Pong { t })) = session.open_datagram(&buf[..n])
         {
             rtts.push((start.elapsed().as_nanos() as u64 - t) as f64 / 1e6);
         }
@@ -68,15 +68,15 @@ fn main() -> std::io::Result<()> {
     control.send(&Control::Enter { x: 0.5, y: 0.5, exits: Edges::default(), locked: true })?;
     std::thread::sleep(Duration::from_millis(300));
     for _ in 0..10 {
-        send(Input::Motion { dx: 10, dy: 0 });
+        send(Datagram::Motion { dx: 10, dy: 0 });
         std::thread::sleep(Duration::from_millis(10));
     }
     println!("entered at the center, then moved right by 10 x 10 counts");
     if let Some(text) = text {
         for c in text.chars() {
             let Some(usage) = mac_key(c).and_then(usage_of_mac_key) else { continue };
-            send(Input::Key { usage, down: true });
-            send(Input::Key { usage, down: false });
+            send(Datagram::Key { usage, down: true });
+            send(Datagram::Key { usage, down: false });
             std::thread::sleep(Duration::from_millis(15));
         }
         println!("typed {text:?}");

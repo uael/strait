@@ -21,6 +21,8 @@ mod screens;
 #[cfg(target_os = "macos")]
 mod settings;
 #[cfg(target_os = "macos")]
+mod sound;
+#[cfg(target_os = "macos")]
 mod sys;
 
 use std::fs::File;

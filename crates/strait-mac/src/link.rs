@@ -8,15 +8,21 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use strait::session::{Identity, Session, fingerprint};
-use strait::wire::{Control, Input, Preset};
+use strait::wire::{Control, Datagram, Preset};
 
 use crate::core::{Link, Shared, Uplink};
+use crate::sound::Player;
 use crate::log;
 
 /// How often Windows learns what is held while it has input.
 const STATE_EVERY: Duration = Duration::from_millis(100);
 /// Pings go out every this many state ticks.
 const PING_TICKS: u32 = 10;
+/// Windows sends no sound while it plays none; after this long the Mac
+/// lets go of its sound output.
+const SOUND_IDLE: Duration = Duration::from_secs(1);
+/// After the sound output fails to open, the Mac tries again this late.
+const SOUND_RETRY: Duration = Duration::from_secs(5);
 
 fn now_ns() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
@@ -116,7 +122,7 @@ fn connect(core: &Shared, identity: &Identity, peer_path: &PathBuf, heard: &Hear
         c.set_status(|s| s.paired_pc = Some(fp));
     }
     spawn_heartbeat(core.clone(), uplink.clone());
-    spawn_pongs(core.clone(), uplink.clone());
+    spawn_receiver(core.clone(), uplink.clone());
 
     let mut reader = session.reader(BufReader::new(stream));
     let end = loop {
@@ -149,10 +155,10 @@ fn spawn_heartbeat(core: Shared, uplink: Arc<Uplink>) {
         while is_current(&core, &uplink) {
             let state = core.lock().unwrap().windows_state();
             if let Some((keys, buttons)) = state {
-                uplink.send(Input::State { keys, buttons });
+                uplink.send(Datagram::State { keys, buttons });
             }
             if tick % PING_TICKS == 0 {
-                uplink.send(Input::Ping { t: now_ns() });
+                uplink.send(Datagram::Ping { t: now_ns() });
             }
             tick = tick.wrapping_add(1);
             std::thread::sleep(STATE_EVERY);
@@ -160,21 +166,53 @@ fn spawn_heartbeat(core: Shared, uplink: Arc<Uplink>) {
     });
 }
 
-fn spawn_pongs(core: Shared, uplink: Arc<Uplink>) {
+/// Reads what Windows sends: pongs, which measure the round trip, and the
+/// sound it plays, which goes to the Mac's sound output.
+fn spawn_receiver(core: Shared, uplink: Arc<Uplink>) {
     std::thread::spawn(move || {
         let socket = uplink.socket.clone();
-        socket.set_read_timeout(Some(Duration::from_secs(1))).expect("non-zero timeout");
-        let mut buf = [0u8; 256];
+        socket.set_read_timeout(Some(SOUND_IDLE / 4)).expect("non-zero timeout");
+        let mut buf = [0u8; 2048];
         let mut last_seq = None;
+        let mut player: Option<Player> = None;
+        let mut sound_at = Instant::now();
+        let mut failed_at: Option<Instant> = None;
         while is_current(&core, &uplink) {
+            if player.is_some() && sound_at.elapsed() > SOUND_IDLE {
+                player = None;
+            }
             let Ok(n) = socket.recv(&mut buf) else { continue };
-            let Ok((seq, Input::Pong { t })) = uplink.session.open_input(&buf[..n]) else { continue };
+            let Ok((seq, datagram)) = uplink.session.open_datagram(&buf[..n]) else { continue };
             if last_seq.is_some_and(|l| seq <= l) {
                 continue;
             }
             last_seq = Some(seq);
-            let rtt = (now_ns().saturating_sub(t)) as f64 / 1e6;
-            core.lock().unwrap().set_status(|s| s.rtt_ms = Some((rtt * 10.0).round() / 10.0));
+            match datagram {
+                Datagram::Pong { t } => {
+                    let rtt = (now_ns().saturating_sub(t)) as f64 / 1e6;
+                    core.lock().unwrap().set_status(|s| s.rtt_ms = Some((rtt * 10.0).round() / 10.0));
+                }
+                Datagram::Sound { rate, samples } => {
+                    sound_at = Instant::now();
+                    if player.as_ref().is_none_or(|p| p.rate != rate) && failed_at.is_none_or(|t| t.elapsed() > SOUND_RETRY) {
+                        player = match Player::new(rate) {
+                            Ok(p) => {
+                                failed_at = None;
+                                Some(p)
+                            }
+                            Err(e) => {
+                                log(&format!("play Windows sound: {e}"));
+                                failed_at = Some(Instant::now());
+                                None
+                            }
+                        };
+                    }
+                    if let Some(p) = &mut player {
+                        p.push(&samples);
+                    }
+                }
+                other => log(&format!("unexpected datagram from the PC: {other:?}")),
+            }
         }
     });
 }

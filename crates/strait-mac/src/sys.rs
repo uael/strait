@@ -1,6 +1,7 @@
 //! macOS functions strait calls that have no Rust crate it depends on:
 //! Core Graphics events and displays, IOKit HID, DDC over IOAVService,
-//! display HDR through SkyLight, and two Objective-C entry points.
+//! display HDR through SkyLight, the default sound output, and two
+//! Objective-C entry points.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -162,6 +163,75 @@ unsafe extern "C" {
     pub fn IOAVServiceCreateWithService(allocator: CFAllocatorRef, service: io_object_t) -> IOAVServiceRef;
     pub fn IOAVServiceReadI2C(service: IOAVServiceRef, chip: u32, offset: u32, out: *mut u8, len: u32) -> IOReturn;
     pub fn IOAVServiceWriteI2C(service: IOAVServiceRef, chip: u32, offset: u32, data: *const u8, len: u32) -> IOReturn;
+}
+
+// Sound output.
+pub type AudioUnit = *mut c_void;
+pub const kAudioUnitType_Output: u32 = u32::from_be_bytes(*b"auou");
+pub const kAudioUnitSubType_DefaultOutput: u32 = u32::from_be_bytes(*b"def ");
+pub const kAudioUnitManufacturer_Apple: u32 = u32::from_be_bytes(*b"appl");
+pub const kAudioFormatLinearPCM: u32 = u32::from_be_bytes(*b"lpcm");
+pub const kAudioFormatFlagIsFloat: u32 = 1 << 0;
+pub const kAudioFormatFlagIsPacked: u32 = 1 << 3;
+pub const kAudioUnitProperty_StreamFormat: u32 = 8;
+pub const kAudioUnitProperty_SetRenderCallback: u32 = 23;
+pub const kAudioUnitScope_Input: u32 = 1;
+
+#[repr(C)]
+pub struct AudioComponentDescription {
+    pub componentType: u32,
+    pub componentSubType: u32,
+    pub componentManufacturer: u32,
+    pub componentFlags: u32,
+    pub componentFlagsMask: u32,
+}
+
+#[repr(C)]
+pub struct AudioStreamBasicDescription {
+    pub mSampleRate: f64,
+    pub mFormatID: u32,
+    pub mFormatFlags: u32,
+    pub mBytesPerPacket: u32,
+    pub mFramesPerPacket: u32,
+    pub mBytesPerFrame: u32,
+    pub mChannelsPerFrame: u32,
+    pub mBitsPerChannel: u32,
+    pub mReserved: u32,
+}
+
+#[repr(C)]
+pub struct AudioBuffer {
+    pub mNumberChannels: u32,
+    pub mDataByteSize: u32,
+    pub mData: *mut c_void,
+}
+
+/// One buffer: the unit's input format is interleaved.
+#[repr(C)]
+pub struct AudioBufferList {
+    pub mNumberBuffers: u32,
+    pub mBuffers: [AudioBuffer; 1],
+}
+
+pub type AURenderCallback =
+    extern "C" fn(refcon: *mut c_void, flags: *mut u32, time: *const c_void, bus: u32, frames: u32, data: *mut AudioBufferList) -> i32;
+
+#[repr(C)]
+pub struct AURenderCallbackStruct {
+    pub inputProc: AURenderCallback,
+    pub inputProcRefCon: *mut c_void,
+}
+
+#[link(name = "AudioToolbox", kind = "framework")]
+unsafe extern "C" {
+    pub fn AudioComponentFindNext(after: *mut c_void, description: *const AudioComponentDescription) -> *mut c_void;
+    pub fn AudioComponentInstanceNew(component: *mut c_void, unit: *mut AudioUnit) -> i32;
+    pub fn AudioComponentInstanceDispose(unit: AudioUnit) -> i32;
+    pub fn AudioUnitSetProperty(unit: AudioUnit, property: u32, scope: u32, element: u32, data: *const c_void, size: u32) -> i32;
+    pub fn AudioUnitInitialize(unit: AudioUnit) -> i32;
+    pub fn AudioUnitUninitialize(unit: AudioUnit) -> i32;
+    pub fn AudioOutputUnitStart(unit: AudioUnit) -> i32;
+    pub fn AudioOutputUnitStop(unit: AudioUnit) -> i32;
 }
 
 #[link(name = "AppKit", kind = "framework")]

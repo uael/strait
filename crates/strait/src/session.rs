@@ -3,7 +3,7 @@
 //! The Mac dials Windows over TCP and both run a Noise XX handshake, which
 //! proves each side's static key. Callers then decide whether they trust the
 //! peer's key (pairing). One cipher pair protects both channels: control
-//! frames on the TCP stream use nonces 0, 1, 2... per direction, and input
+//! frames on the TCP stream use nonces 0, 1, 2... per direction, and
 //! datagrams use their sequence number with the top bit set, so the two
 //! channels never reuse a nonce.
 
@@ -11,7 +11,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::wire::{Control, Input};
+use crate::wire::{Control, Datagram};
 
 const PATTERN: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 const PROLOGUE: &[u8] = b"strait/1";
@@ -125,11 +125,12 @@ impl Session {
         Ok(Session { transport: Arc::new(transport), peer })
     }
 
-    /// Encrypts one input datagram. `seq` must grow with every datagram.
-    pub fn seal_input(&self, seq: u64, input: &Input) -> Vec<u8> {
+    /// Encrypts one datagram. `seq` must grow with every datagram sent in
+    /// this direction.
+    pub fn seal_datagram(&self, seq: u64, datagram: &Datagram) -> Vec<u8> {
         assert!(seq < DATAGRAM_NONCE, "datagram sequence exhausted");
         let mut plain = Vec::with_capacity(48);
-        input.encode(&mut plain);
+        datagram.encode(&mut plain);
         let mut out = vec![0; 8 + plain.len() + TAG];
         out[..8].copy_from_slice(&seq.to_le_bytes());
         let n = self
@@ -141,7 +142,7 @@ impl Session {
     }
 
     /// Authenticates and decodes one datagram, returning its sequence number.
-    pub fn open_input(&self, datagram: &[u8]) -> io::Result<(u64, Input)> {
+    pub fn open_datagram(&self, datagram: &[u8]) -> io::Result<(u64, Datagram)> {
         if datagram.len() < 8 + TAG {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "datagram too short"));
         }
@@ -151,8 +152,8 @@ impl Session {
         }
         let mut plain = vec![0; datagram.len()];
         let n = self.transport.read_message(seq | DATAGRAM_NONCE, &datagram[8..], &mut plain).map_err(crypto_err)?;
-        let input = Input::decode(&plain[..n]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok((seq, input))
+        let decoded = Datagram::decode(&plain[..n]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok((seq, decoded))
     }
 
     pub fn writer<W: Write>(&self, stream: W) -> ControlWriter<W> {
@@ -256,18 +257,18 @@ mod tests {
     #[test]
     fn datagrams_authenticate_and_reject_tampering() {
         let (m, w, ..) = pair();
-        let d = m.seal_input(41, &Input::Motion { dx: 1, dy: -2 });
-        assert_eq!(w.open_input(&d).unwrap(), (41, Input::Motion { dx: 1, dy: -2 }));
+        let d = m.seal_datagram(41, &Datagram::Motion { dx: 1, dy: -2 });
+        assert_eq!(w.open_datagram(&d).unwrap(), (41, Datagram::Motion { dx: 1, dy: -2 }));
         let mut bad = d.clone();
         *bad.last_mut().unwrap() ^= 1;
-        assert!(w.open_input(&bad).is_err());
+        assert!(w.open_datagram(&bad).is_err());
         let mut renumbered = d;
         renumbered[0] ^= 1;
-        assert!(w.open_input(&renumbered).is_err());
+        assert!(w.open_datagram(&renumbered).is_err());
         // Windows' own datagrams use the other direction's key.
-        let pong = w.seal_input(0, &Input::Pong { t: 9 });
-        assert_eq!(m.open_input(&pong).unwrap().1, Input::Pong { t: 9 });
-        assert!(w.open_input(&pong).is_err());
+        let pong = w.seal_datagram(0, &Datagram::Pong { t: 9 });
+        assert_eq!(m.open_datagram(&pong).unwrap().1, Datagram::Pong { t: 9 });
+        assert!(w.open_datagram(&pong).is_err());
     }
 
     #[test]

@@ -9,6 +9,9 @@ rust-version.workspace = true
 strait = { path = "../strait" }
 png = "0.17"
 
+[target.'cfg(windows)'.dependencies]
+cpal = "0.18.2"
+
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.59"
 features = [

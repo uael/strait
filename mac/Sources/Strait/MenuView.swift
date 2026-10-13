@@ -22,6 +22,10 @@ struct MenuView: View {
                     if let hdr = status.hdr {
                         Toggle("HDR on the monitor", isOn: Binding(get: { hdr }, set: { engine.hdr($0) }))
                     }
+                    Toggle("Play Windows sound on this Mac", isOn: Binding(
+                        get: { status.sound },
+                        set: { engine.sound($0) }
+                    ))
                     Toggle("Type Windows shortcuts with ⌘", isOn: Binding(
                         get: { status.swapCommandControl },
                         set: { engine.swapCommandControl($0) }

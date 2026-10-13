@@ -28,6 +28,8 @@ pub struct Settings {
     pub pointer_speed: f64,
     /// The PC's name or address; found by its beacon when absent.
     pub host: Option<String>,
+    /// Windows sends what it plays, and the Mac plays it.
+    pub sound: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -37,6 +39,7 @@ struct Stored {
     swap_command_control: bool,
     pointer_speed: Option<f64>,
     host: Option<String>,
+    sound: Option<bool>,
 }
 
 impl Settings {
@@ -47,6 +50,7 @@ impl Settings {
             swap_command_control: stored.swap_command_control,
             pointer_speed: stored.pointer_speed.unwrap_or(DEFAULT_SPEED).clamp(MIN_SPEED, MAX_SPEED),
             host: stored.host,
+            sound: stored.sound.unwrap_or(true),
         }
     }
 
@@ -56,6 +60,7 @@ impl Settings {
             swap_command_control: self.swap_command_control,
             pointer_speed: Some(self.pointer_speed),
             host: self.host.clone(),
+            sound: Some(self.sound),
         };
         let json = serde_json::to_vec_pretty(&stored).expect("settings serialize");
         if let Err(e) = std::fs::write(path, json) {
