@@ -1,0 +1,9 @@
+[package]
+name = "strait"
+description = "Wire format, session and shared logic of strait"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+snow = "0.9"
