@@ -11,7 +11,7 @@ mod capture;
 #[cfg(target_os = "macos")]
 mod core;
 #[cfg(target_os = "macos")]
-mod ddc;
+pub mod ddc;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(target_os = "macos")]
