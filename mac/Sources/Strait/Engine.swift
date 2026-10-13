@@ -29,6 +29,7 @@ struct Status: Decodable, Equatable {
     var inputMonitoring: Bool
     var secureInput: Bool
     var swapCommandControl: Bool
+    var pointerSpeed: Double
     var thisMac: String
     var pairedPc: String?
     var problem: String?
@@ -96,5 +97,6 @@ final class Engine: ObservableObject {
     func choose(_ preset: Status.Preset) { send(["preset": preset.rawValue]) }
     func focus(windows: Bool) { send(["focus": windows ? "windows" : "mac"]) }
     func swapCommandControl(_ on: Bool) { send(["swapCommandControl": on]) }
+    func pointerSpeed(_ speed: Double) { send(["pointerSpeed": speed]) }
     func forgetPC() { send(["forget": true]) }
 }

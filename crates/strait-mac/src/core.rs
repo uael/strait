@@ -79,6 +79,7 @@ pub struct Status {
     pub input_monitoring: bool,
     pub secure_input: bool,
     pub swap_command_control: bool,
+    pub pointer_speed: f64,
     pub this_mac: String,
     pub paired_pc: Option<String>,
     pub problem: Option<String>,
@@ -113,6 +114,8 @@ pub struct Core {
     /// Where the Mac pointer was when Windows took input.
     parked_at: Option<Point>,
     raw_motion_at: Option<Instant>,
+    /// Scaled motion not yet sent, below one count.
+    motion_rest: (f64, f64),
     settings: Settings,
     settings_path: PathBuf,
     notify: Box<dyn Fn(&Status) + Send>,
@@ -141,6 +144,7 @@ impl Core {
             input_monitoring: false,
             secure_input: false,
             swap_command_control: settings.swap_command_control,
+            pointer_speed: settings.pointer_speed,
             this_mac,
             paired_pc,
             problem: None,
@@ -154,6 +158,7 @@ impl Core {
             uplink: None,
             parked_at: None,
             raw_motion_at: None,
+                motion_rest: (0.0, 0.0),
                 settings,
                 settings_path,
                 notify,
@@ -220,7 +225,11 @@ impl Core {
 
     /// Gives input to Windows; the pointer appears at (`x`, `y`) of its desktop.
     fn give_input(&mut self, x: f32, y: f32, locked: bool) {
-        let Some(uplink) = self.uplink.clone() else { return };
+        let Some(uplink) = self.uplink.clone() else {
+            crate::log("input stays on the Mac: no PC connected");
+            return;
+        };
+        crate::log(&format!("input to Windows at ({x:.2}, {y:.2}){}", if locked { ", locked" } else { "" }));
         self.parked_at = Some(screens::pointer());
         let _ = uplink.control.send(Control::Enter { x, y, exits: self.layout.exits(), locked });
         unsafe {
@@ -235,6 +244,7 @@ impl Core {
         if !self.windows_has_input() {
             return;
         }
+        crate::log(&format!("input back to the Mac{}", if landing.is_some() { " through an edge" } else { "" }));
         if tell_windows {
             self.send_control(Control::Leave);
         }
@@ -254,18 +264,20 @@ impl Core {
 
     /// The switch hotkey. With one machine on screen it switches the
     /// monitor too, like a hardware KVM; side by side it only moves input.
+    /// Windows' edges stay open, so the pointer can still reach the Mac's
+    /// other displays.
     fn toggle(&mut self) {
-        self.focus(!self.windows_has_input());
+        self.focus(!self.windows_has_input(), false);
     }
 
-    /// Gives input to Windows, locked, or takes it back, from the hotkey or
-    /// the menu.
-    pub fn focus(&mut self, windows: bool) {
+    /// Gives input to Windows or takes it back. `locked` keeps Windows'
+    /// edges from handing input back, for games that leave the pointer free.
+    pub fn focus(&mut self, windows: bool, locked: bool) {
         if !self.status.pbp {
-            self.show(if windows { Preset::WindowsFull } else { Preset::MacFull });
+            self.show(if windows { Preset::WindowsFull } else { Preset::MacFull }, locked);
         } else if windows {
             if !self.windows_has_input() {
-                self.give_input(0.5, 0.5, true);
+                self.give_input(0.5, 0.5, locked);
             }
         } else {
             self.take_input_back(None, true);
@@ -339,21 +351,30 @@ impl Core {
             return false;
         }
         let raw_is_fresh = self.raw_motion_at.is_some_and(|t| t.elapsed() < RAW_MOTION_FRESH);
-        if !raw_is_fresh
-            && let Some(u) = &self.uplink
-        {
-            u.send(Input::Motion { dx: dx.round() as i32, dy: dy.round() as i32 });
+        if !raw_is_fresh {
+            self.send_motion(dx, dy);
         }
         true
+    }
+
+    /// Sends motion scaled by the user's speed for Windows. The fraction a
+    /// datagram cannot carry waits for the next one, so slow motion is not lost.
+    fn send_motion(&mut self, dx: f64, dy: f64) {
+        let Some(u) = &self.uplink else { return };
+        let speed = self.settings.pointer_speed;
+        let (rx, ry) = (self.motion_rest.0 + dx * speed, self.motion_rest.1 + dy * speed);
+        let (ix, iy) = (rx.trunc(), ry.trunc());
+        self.motion_rest = (rx - ix, ry - iy);
+        if ix != 0.0 || iy != 0.0 {
+            u.send(Input::Motion { dx: ix as i32, dy: iy as i32 });
+        }
     }
 
     /// Raw mouse motion, in device counts, before macOS acceleration.
     pub fn raw_motion(&mut self, dx: i32, dy: i32) {
         self.raw_motion_at = Some(Instant::now());
-        if self.windows_has_input()
-            && let Some(u) = &self.uplink
-        {
-            u.send(Input::Motion { dx, dy });
+        if self.windows_has_input() {
+            self.send_motion(f64::from(dx), f64::from(dy));
         }
     }
 
@@ -388,7 +409,7 @@ impl Core {
     /// Shows one machine full screen: switches the monitor's input over DDC
     /// and moves the keyboard and mouse with it. Side by side is the
     /// monitor's PBP mode, which only its menu turns on.
-    pub fn show(&mut self, preset: Preset) {
+    pub fn show(&mut self, preset: Preset, locked: bool) {
         let problem = match (self.status.pbp, preset) {
             (false, Preset::Split) => Some("Turn on PBP in the monitor's menu to see both side by side"),
             (true, Preset::MacFull | Preset::WindowsFull) => Some("PBP is on: turn it off in the monitor's menu to show one machine"),
@@ -405,7 +426,7 @@ impl Core {
         self.settings.save(&self.settings_path);
         self.displays_changed();
         match preset {
-            Preset::WindowsFull if !self.windows_has_input() => self.give_input(0.5, 0.5, true),
+            Preset::WindowsFull if !self.windows_has_input() => self.give_input(0.5, 0.5, locked),
             Preset::MacFull => self.take_input_back(None, true),
             _ => {}
         }
@@ -413,6 +434,7 @@ impl Core {
         let me = self.me.clone();
         std::thread::spawn(move || {
             let ok = ddc::Monitor::find().is_some_and(|mut m| m.write(ddc::INPUT_SOURCE, source));
+            crate::log(&format!("monitor input {source:#04x}: {}", if ok { "switched" } else { "no DDC answer" }));
             if let Some(core) = me.upgrade() {
                 core.lock().unwrap().set_status(|s| {
                     s.monitor = ok;
@@ -437,6 +459,13 @@ impl Core {
             u.close();
         }
         self.set_status(|s| s.paired_pc = None);
+    }
+
+    pub fn set_pointer_speed(&mut self, speed: f64) {
+        let speed = speed.clamp(crate::settings::MIN_SPEED, crate::settings::MAX_SPEED);
+        self.settings.pointer_speed = speed;
+        self.settings.save(&self.settings_path);
+        self.set_status(|s| s.pointer_speed = speed);
     }
 
     pub fn set_host(&mut self, host: Option<String>) {

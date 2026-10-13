@@ -112,6 +112,7 @@ enum Command {
     SwapCommandControl(bool),
     /// "windows" gives input to Windows, locked; "mac" takes it back.
     Focus(String),
+    PointerSpeed(f64),
     Forget(bool),
     Host(Option<String>),
     /// Publishes the status now, for a view that just appeared.
@@ -135,11 +136,12 @@ pub extern "C" fn strait_command(json: *const c_char) {
     };
     match command {
         Command::Preset(name) => match preset_named(&name) {
-            Some(p) => engine.core.lock().unwrap().show(p),
+            Some(p) => engine.core.lock().unwrap().show(p, false),
             None => log(&format!("unknown preset {name}")),
         },
         Command::SwapCommandControl(on) => engine.core.lock().unwrap().set_swap(on),
-        Command::Focus(to) => engine.core.lock().unwrap().focus(to == "windows"),
+        Command::Focus(to) => engine.core.lock().unwrap().focus(to == "windows", true),
+        Command::PointerSpeed(speed) => engine.core.lock().unwrap().set_pointer_speed(speed),
         Command::Forget(true) => engine.core.lock().unwrap().forget(&engine.peer_path),
         Command::Host(host) => engine.core.lock().unwrap().set_host(host.filter(|h| !h.trim().is_empty())),
         Command::Refresh(true) => engine.core.lock().unwrap().publish(),

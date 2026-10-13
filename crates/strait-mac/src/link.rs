@@ -122,7 +122,7 @@ fn connect(core: &Shared, identity: &Identity, peer_path: &PathBuf, heard: &Hear
     let end = loop {
         match reader.recv() {
             Ok(Control::Exit { edge, along }) => core.lock().unwrap().exit(edge, along),
-            Ok(Control::Show(preset)) => core.lock().unwrap().show(preset),
+            Ok(Control::Show(preset)) => core.lock().unwrap().show(preset, false),
             Ok(Control::Clipboard(clip)) => core.lock().unwrap().clipboard_from_windows(&clip),
             Ok(other) => log(&format!("unexpected control from the PC: {other:?}")),
             Err(e) => break e,

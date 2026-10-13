@@ -14,6 +14,11 @@ struct MenuView: View {
                 Section(title: "Input") { InputPicker(status: status) }
                 Section(title: "Monitor") { PresetPicker(status: status) }
                 VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Pointer speed on Windows")
+                        Slider(value: Binding(get: { status.pointerSpeed }, set: { engine.pointerSpeed($0) }), in: 0.1...2.0)
+                            .controlSize(.small)
+                    }
                     Toggle("Type Windows shortcuts with ⌘", isOn: Binding(
                         get: { status.swapCommandControl },
                         set: { engine.swapCommandControl($0) }
@@ -163,8 +168,8 @@ private struct InputPicker: View {
                 .disabled(!connected)
         }
         Text(status.pbp
-             ? "⌃⌥⌘ Space moves the keyboard and mouse. Windows keeps them until you press it again."
-             : "⌃⌥⌘ Space switches the keyboard, mouse and screen, like a KVM.")
+             ? "⌃⌥⌘ Space moves the keyboard and mouse. Choosing Windows here keeps them there, for games."
+             : "⌃⌥⌘ Space switches the keyboard, mouse and screen, like a KVM. Choosing Windows here keeps them there, for games.")
             .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
