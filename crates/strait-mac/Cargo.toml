@@ -1,0 +1,17 @@
+[package]
+name = "strait-mac"
+description = "Mac side of strait: captures input and drives the session; linked into the menu bar app"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+strait = { path = "../strait" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation-sys = "0.8"
