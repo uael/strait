@@ -33,7 +33,7 @@ static LOG: OnceLock<Mutex<File>> = OnceLock::new();
 pub fn log(line: &str) {
     eprintln!("strait: {line}");
     if let Some(file) = LOG.get() {
-        let _ = writeln!(file.lock().unwrap(), "{line}");
+        let _ = writeln!(file.lock().unwrap(), "{} {line}", strait::timestamp());
     }
 }
 

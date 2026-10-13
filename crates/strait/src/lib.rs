@@ -15,6 +15,14 @@ pub const PORT: u16 = 47800;
 pub const SERVICE_TYPE: &str = "_strait._tcp";
 pub const SERVICE_KEY: &str = "key";
 
+/// Time of day in UTC to the millisecond, the prefix of each log line on
+/// both machines so their logs line up.
+pub fn timestamp() -> String {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let (h, m, s, ms) = (ms / 3_600_000 % 24, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}Z")
+}
+
 pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
