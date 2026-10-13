@@ -117,6 +117,8 @@ unsafe extern "C" {
     pub fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     pub fn CGEventCreate(source: *mut c_void) -> CGEventRef;
     pub fn CGWarpMouseCursorPosition(p: CGPoint) -> i32;
+    pub fn CGEventSourceCreate(state: i32) -> *mut c_void;
+    pub fn CGEventSourceSetLocalEventsSuppressionInterval(source: *mut c_void, seconds: f64);
     pub fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
     pub fn CGDisplayHideCursor(display: CGDirectDisplayID) -> i32;
     pub fn CGDisplayShowCursor(display: CGDirectDisplayID) -> i32;
@@ -205,6 +207,20 @@ pub fn system_event_data(event: CGEventRef) -> (i16, i64) {
         };
         objc_autoreleasePoolPop(pool);
         result
+    }
+}
+
+/// Removes the pause macOS puts on local mouse input after a warp, which
+/// otherwise freezes the pointer for a quarter second each time it comes
+/// back from Windows. The setting belongs to the combined session state,
+/// so the source is kept for the life of the process.
+pub fn no_pause_after_warp() {
+    const COMBINED_SESSION_STATE: i32 = 0;
+    unsafe {
+        let source = CGEventSourceCreate(COMBINED_SESSION_STATE);
+        if !source.is_null() {
+            CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
+        }
     }
 }
 

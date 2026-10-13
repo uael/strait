@@ -8,6 +8,8 @@ mod dib;
 #[cfg(windows)]
 mod clip;
 #[cfg(windows)]
+mod ddc;
+#[cfg(windows)]
 mod display;
 #[cfg(windows)]
 mod inject;
@@ -33,8 +35,9 @@ fn main() -> std::process::ExitCode {
         None => {}
         Some("--install") => return autostart::install(),
         Some("--uninstall") => return autostart::uninstall(),
+        Some("--ddc") => return ddc_command(),
         Some(other) => {
-            eprintln!("unknown argument {other}; expected --install or --uninstall");
+            eprintln!("unknown argument {other}; expected --install, --uninstall or --ddc");
             return ExitCode::FAILURE;
         }
     }
@@ -67,6 +70,30 @@ fn main() -> std::process::ExitCode {
     let net = net::Net::start(identity, dir.join("peer.key"), ui::notifier());
     ui::run(net);
     ExitCode::SUCCESS
+}
+
+/// `--ddc <feature> [value]` reads or sets a monitor feature and writes the
+/// outcome to `ddc.txt` beside the log, since this app has no console. It
+/// must run on the user's desktop, where Windows exposes the monitors.
+#[cfg(windows)]
+fn ddc_command() -> std::process::ExitCode {
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let number = |s: &str| match s.strip_prefix("0x") {
+        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+        None => s.parse().ok(),
+    };
+    let Some(feature) = args.first().and_then(|a| number(a)) else {
+        return std::process::ExitCode::FAILURE;
+    };
+    let Some(dir) = std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("strait")) else {
+        return std::process::ExitCode::FAILURE;
+    };
+    let out = match args.get(1).and_then(|v| number(v)) {
+        Some(value) => format!("set {feature:#04x} = {value:#x}: {}\n", ddc::write(feature as u8, value)),
+        None => ddc::read(feature as u8).iter().map(|(m, v)| format!("{m}: {feature:#04x} = {v:?}\n")).collect(),
+    };
+    let _ = std::fs::write(dir.join("ddc.txt"), out);
+    std::process::ExitCode::SUCCESS
 }
 
 /// A second copy would fight the first over the ports.

@@ -255,7 +255,6 @@ impl Core {
             .unwrap_or_else(screens::main_center);
         unsafe {
             CGWarpMouseCursorPosition(CGPoint { x: target.x, y: target.y });
-            // Reconnecting also cancels the pause macOS imposes after a warp.
             CGAssociateMouseAndMouseCursorPosition(true);
             CGDisplayShowCursor(0);
         }

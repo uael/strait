@@ -73,6 +73,7 @@ pub extern "C" fn strait_start(dir: *const c_char, on_status: StatusFn, on_clipb
     let _ = ENGINE.set(Engine { core: core.clone(), peer_path: peer_path.clone() });
     log(&format!("strait {} started; this Mac is {}", env!("CARGO_PKG_VERSION"), fingerprint(&identity.public)));
     allow_background_cursor_hiding();
+    no_pause_after_warp();
     link::start(core.clone(), identity, peer_path);
     std::thread::Builder::new().name("watch".into()).spawn(move || watch(core)).expect("spawn watch thread");
     true
