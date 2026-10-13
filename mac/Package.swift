@@ -14,6 +14,7 @@ let package = Package(
                 // A static library does not carry its frameworks; these are the engine's.
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),
+                .linkedFramework("AudioToolbox"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("IOKit"),
             ]

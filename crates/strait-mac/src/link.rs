@@ -180,6 +180,7 @@ fn spawn_receiver(core: Shared, uplink: Arc<Uplink>) {
         while is_current(&core, &uplink) {
             if player.is_some() && sound_at.elapsed() > SOUND_IDLE {
                 player = None;
+                log("Windows went quiet");
             }
             let Ok(n) = socket.recv(&mut buf) else { continue };
             let Ok((seq, datagram)) = uplink.session.open_datagram(&buf[..n]) else { continue };
@@ -197,6 +198,7 @@ fn spawn_receiver(core: Shared, uplink: Arc<Uplink>) {
                     if player.as_ref().is_none_or(|p| p.rate != rate) && failed_at.is_none_or(|t| t.elapsed() > SOUND_RETRY) {
                         player = match Player::new(rate) {
                             Ok(p) => {
+                                log(&format!("playing Windows sound at {rate} Hz"));
                                 failed_at = None;
                                 Some(p)
                             }
