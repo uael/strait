@@ -79,11 +79,23 @@ pub extern "C" fn strait_start(dir: *const c_char, on_status: StatusFn, on_clipb
     true
 }
 
+/// The watch loop reads the monitor's input every this many seconds.
+const MONITOR_EVERY: u32 = 3;
+
 /// Follows permissions and Secure Input, and starts capture once macOS
 /// allows it.
 fn watch(core: Shared) {
     let mut capturing = false;
+    let mut tick = 0u32;
     loop {
+        tick = tick.wrapping_add(1);
+        // Someone may switch the monitor from its own menu, or from Windows.
+        let pbp = core.lock().unwrap().status.pbp;
+        if !pbp && tick % MONITOR_EVERY == 0
+            && let Some(source) = crate::ddc::Monitor::find().and_then(|mut m| m.read(crate::ddc::INPUT_SOURCE))
+        {
+            core.lock().unwrap().monitor_reports(source);
+        }
         let accessibility = unsafe { AXIsProcessTrusted() };
         let input_monitoring = unsafe { IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) } == kIOHIDAccessTypeGranted;
         let secure_input = unsafe { IsSecureEventInputEnabled() };

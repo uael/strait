@@ -104,6 +104,8 @@ pub fn preset_named(name: &str) -> Option<Preset> {
 /// Raw mouse motion is trusted for this long after its last report; past
 /// it, motion comes from the event tap (the trackpad has no raw report).
 const RAW_MOTION_FRESH: std::time::Duration = std::time::Duration::from_millis(50);
+/// How long a monitor input switch takes to show in what the monitor reports.
+const SWITCH_SETTLES: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub struct Core {
     me: Weak<Mutex<Core>>,
@@ -116,6 +118,9 @@ pub struct Core {
     raw_motion_at: Option<Instant>,
     /// Scaled motion not yet sent, below one count.
     motion_rest: (f64, f64),
+    /// When strait last switched the monitor, which then reports the old
+    /// input for a moment.
+    switched_at: Option<Instant>,
     settings: Settings,
     settings_path: PathBuf,
     notify: Box<dyn Fn(&Status) + Send>,
@@ -159,6 +164,7 @@ impl Core {
             parked_at: None,
             raw_motion_at: None,
                 motion_rest: (0.0, 0.0),
+                switched_at: None,
                 settings,
                 settings_path,
                 notify,
@@ -416,6 +422,26 @@ impl Core {
         });
     }
 
+    /// Aligns what strait believes the monitor shows with its input source,
+    /// read over DDC. Only without PBP does that source name the picture;
+    /// in PBP it names one half, so strait keeps its own record there.
+    pub fn monitor_reports(&mut self, source: u16) {
+        if self.status.pbp || self.switched_at.is_some_and(|t| t.elapsed() < SWITCH_SETTLES) {
+            return;
+        }
+        let actual = if source == crate::settings::WINDOWS_INPUT { Preset::WindowsFull } else { Preset::MacFull };
+        if actual == self.settings.preset {
+            return;
+        }
+        crate::log(&format!("the monitor shows input {source:#04x}; following it"));
+        self.settings.preset = actual;
+        self.settings.save(&self.settings_path);
+        self.displays_changed();
+        if actual == Preset::MacFull {
+            self.take_input_back(None, true);
+        }
+    }
+
     /// Switches the monitor to `preset` over DDC.
     ///
     /// The monitor changes the half that shows the input a command arrives
@@ -446,6 +472,7 @@ impl Core {
             return;
         }
         // A second command from the same side would change the other half.
+        self.switched_at = Some(Instant::now());
         self.settings.preset = preset;
         self.settings.save(&self.settings_path);
         self.displays_changed();

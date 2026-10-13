@@ -22,6 +22,10 @@ const REPLY_DELAY: Duration = Duration::from_millis(50);
 
 pub struct Monitor(IOAVServiceRef);
 
+/// One DDC exchange at a time: the bus carries no framing between a
+/// request and its reply, so a read interleaved with a write corrupts both.
+static BUS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // The service is an immutable CF object; IOAVService calls are made from
 // one thread at a time through `&mut self`.
 unsafe impl Send for Monitor {}
@@ -76,6 +80,11 @@ impl Monitor {
 
     /// Current value of a VCP feature.
     pub fn read(&mut self, feature: u8) -> Option<u16> {
+        let _bus = BUS.lock().unwrap_or_else(|e| e.into_inner());
+        self.read_locked(feature)
+    }
+
+    fn read_locked(&mut self, feature: u8) -> Option<u16> {
         let request = [0x82, 0x01, feature];
         let mut packet = request.to_vec();
         packet.push(checksum(DISPLAY, &request));
@@ -100,6 +109,7 @@ impl Monitor {
 
     /// Sets a VCP feature and confirms the monitor took it.
     pub fn write(&mut self, feature: u8, value: u16) -> bool {
+        let _bus = BUS.lock().unwrap_or_else(|e| e.into_inner());
         let [hi, lo] = value.to_be_bytes();
         let request = [0x84, 0x03, feature, hi, lo];
         let mut packet = request.to_vec();
@@ -112,7 +122,7 @@ impl Monitor {
             // Switching inputs keeps the monitor busy for a moment.
             for _ in 0..10 {
                 sleep(REPLY_DELAY * 4);
-                if self.read(feature) == Some(value) {
+                if self.read_locked(feature) == Some(value) {
                     return true;
                 }
             }

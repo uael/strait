@@ -22,6 +22,8 @@ use crate::log;
 /// Without a datagram for this long, the Mac is presumed gone and every
 /// held press is released. The Mac sends its state ten times a second.
 const SILENCE: Duration = Duration::from_millis(500);
+/// Pixels between an entering pointer and the desktop's edge.
+const ENTRY_INSET: i32 = 8;
 
 /// What the tray shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -214,8 +216,13 @@ impl Net {
         match control {
             Control::Enter { x, y, exits, locked } => {
                 let screen = virtual_screen();
-                let px = screen.left + (x.clamp(0.0, 1.0) * (screen.right - screen.left - 1) as f32) as i32;
-                let py = screen.top + (y.clamp(0.0, 1.0) * (screen.bottom - screen.top - 1) as f32) as i32;
+                // A little inside the desktop, so the pointer does not start on
+                // the exit edge it came through and bounce straight back.
+                let place = |frac: f32, lo: i32, hi: i32| {
+                    let p = lo + (frac.clamp(0.0, 1.0) * (hi - lo - 1) as f32) as i32;
+                    p.clamp(lo + ENTRY_INSET, hi - 1 - ENTRY_INSET)
+                };
+                let (px, py) = (place(x, screen.left, screen.right), place(y, screen.top, screen.bottom));
                 unsafe { SetCursorPos(px, py) };
                 let mut focus = self.focus.lock().unwrap();
                 focus.active = true;
