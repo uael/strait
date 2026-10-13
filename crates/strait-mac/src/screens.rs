@@ -56,12 +56,12 @@ pub fn layout(preset: Preset, displays: &[Display]) -> Layout {
     }
 }
 
-/// Whether the monitor shows two inputs side by side: the Mac then has two
-/// external displays (both monitor inputs), or one of half the monitor's
-/// width. The monitor is 32:9; each half is 16:9.
+/// Whether the monitor shows two inputs side by side. The monitor is 32:9
+/// and gives each of its inputs a 16:9 picture in PBP, so the Mac's external
+/// displays are all 16:9 then; without PBP the Mac's HDMI display is 32:9.
 pub fn is_pbp(displays: &[Display]) -> bool {
-    let external: Vec<&Display> = displays.iter().filter(|d| !d.builtin).collect();
-    external.len() >= 2 || external.iter().any(|d| d.bounds.w / d.bounds.h < 2.5)
+    let mut external = displays.iter().filter(|d| !d.builtin).peekable();
+    external.peek().is_some() && external.all(|d| d.bounds.w / d.bounds.h < 2.5)
 }
 
 fn bounding(rects: &[Rect]) -> Option<Rect> {
@@ -118,6 +118,7 @@ mod tests {
         assert!(!is_pbp(&[builtin, wide]));
         assert!(is_pbp(&[builtin, half]));
         assert!(!is_pbp(&[builtin]));
+        assert!(!is_pbp(&[builtin, wide, half]));
 
         let right = d(2560.0, 0.0, 2560.0, 1440.0, false);
         let two = layout(Preset::Split, &[right, builtin, half]);

@@ -184,12 +184,13 @@ private struct PresetPicker: View {
                 Tile(title: title(preset), drawing: AnyView(MonitorDrawing(preset: preset)), selected: status.preset == preset) {
                     engine.choose(preset)
                 }
-                // Side by side is the monitor's PBP mode, which only its menu switches.
-                .disabled((preset == .split) != status.pbp)
+                // PBP, which only the monitor's menu switches, decides between
+                // side by side and Windows full screen.
+                .disabled(preset == (status.pbp ? .windows : .split))
             }
         }
         Text(status.pbp
-             ? "PBP is on. Turn it off in the monitor's menu to show one machine full screen."
+             ? "PBP is on. For Windows full screen, turn PBP off in the monitor's menu."
              : "For side by side, turn on PBP in the monitor's menu.")
             .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }

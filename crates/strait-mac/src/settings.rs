@@ -21,6 +21,7 @@ const DEFAULT_SPEED: f64 = 0.5;
 
 #[derive(Debug)]
 pub struct Settings {
+    /// What the monitor shows, as strait last set it.
     pub preset: Preset,
     pub swap_command_control: bool,
     /// Factor on pointer motion sent to Windows.
@@ -42,12 +43,7 @@ impl Settings {
     pub fn load(path: &Path) -> Settings {
         let stored: Stored = std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         Settings {
-            // Only a full-screen choice is remembered; side by side follows
-            // the monitor's PBP mode.
-            preset: match stored.preset.as_deref().and_then(preset_named) {
-                Some(Preset::WindowsFull) => Preset::WindowsFull,
-                _ => Preset::MacFull,
-            },
+            preset: stored.preset.as_deref().and_then(preset_named).unwrap_or(Preset::MacFull),
             swap_command_control: stored.swap_command_control,
             pointer_speed: stored.pointer_speed.unwrap_or(DEFAULT_SPEED).clamp(MIN_SPEED, MAX_SPEED),
             host: stored.host,

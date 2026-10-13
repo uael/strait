@@ -225,6 +225,14 @@ impl Net {
             }
             Control::Leave => self.leave(),
             Control::Clipboard(clip) => (self.notify)(Event::Clipboard(clip)),
+            // DDC takes a few hundred milliseconds; the session keeps reading meanwhile.
+            Control::Select(source) => {
+                std::thread::spawn(move || {
+                    if !crate::ddc::write(crate::ddc::INPUT_SOURCE, u32::from(source)) {
+                        log!("no monitor took input source {source:#04x}");
+                    }
+                });
+            }
             Control::Exit { .. } | Control::Show(_) => log!("unexpected control from the Mac: {control:?}"),
         }
     }

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use strait::session::{Identity, Session, fingerprint};
-use strait::wire::{Control, Input};
+use strait::wire::{Control, Input, Preset};
 
 use crate::core::{Link, Shared, Uplink};
 use crate::log;
@@ -122,7 +122,13 @@ fn connect(core: &Shared, identity: &Identity, peer_path: &PathBuf, heard: &Hear
     let end = loop {
         match reader.recv() {
             Ok(Control::Exit { edge, along }) => core.lock().unwrap().exit(edge, along),
-            Ok(Control::Show(preset)) => core.lock().unwrap().show(preset, false),
+            Ok(Control::Show(preset)) => {
+                // Windows does not know whether PBP is on; "Windows" means
+                // side by side then.
+                let mut c = core.lock().unwrap();
+                let preset = if c.status.pbp && preset == Preset::WindowsFull { Preset::Split } else { preset };
+                c.show(preset);
+            }
             Ok(Control::Clipboard(clip)) => core.lock().unwrap().clipboard_from_windows(&clip),
             Ok(other) => log(&format!("unexpected control from the PC: {other:?}")),
             Err(e) => break e,

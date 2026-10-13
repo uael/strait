@@ -125,6 +125,10 @@ pub enum Control {
     Clipboard(Clip),
     /// Windows asks the Mac to switch the monitor to `preset`.
     Show(Preset),
+    /// The Mac asks Windows to set the monitor's input source over DDC.
+    /// The monitor changes the half that shows the input the command
+    /// arrives on, so only Windows can give its own half back to the Mac.
+    Select(u16),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -281,6 +285,10 @@ impl Control {
                 out.extend_from_slice(png);
             }
             Control::Show(preset) => out.extend_from_slice(&[5, *preset as u8]),
+            Control::Select(source) => {
+                out.push(6);
+                out.extend_from_slice(&source.to_le_bytes());
+            }
         }
     }
 
@@ -296,6 +304,7 @@ impl Control {
             }
             4 => Control::Clipboard(Clip::Png(r.rest().to_vec())),
             5 => Control::Show(enum_from(&Preset::ALL, r.u8()?)?),
+            6 => Control::Select(u16::from_le_bytes(r.array()?)),
             t => return Err(DecodeError::Tag(t)),
         };
         r.end()?;
@@ -349,6 +358,7 @@ mod tests {
             Control::Clipboard(Clip::Text("héllo\n".into())),
             Control::Clipboard(Clip::Png(vec![0x89, b'P', b'N', b'G'])),
             Control::Show(Preset::WindowsFull),
+            Control::Select(0x0F),
         ] {
             control_round_trip(control);
         }

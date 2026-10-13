@@ -261,10 +261,10 @@ impl Core {
         self.set_status(|s| s.focus = Focus::Mac);
     }
 
-    /// The switch hotkey. With one machine on screen it switches the
-    /// monitor too, like a hardware KVM; side by side it only moves input.
-    /// Windows' edges stay open, so the pointer can still reach the Mac's
-    /// other displays.
+    /// The switch hotkey. Toward Windows it first puts Windows on screen
+    /// if it is not; back toward the Mac it also brings the Mac back when
+    /// Windows filled the screen, like a hardware KVM. Windows' edges stay
+    /// open, so the pointer can still reach the Mac's displays.
     fn toggle(&mut self) {
         self.focus(!self.windows_has_input(), false);
     }
@@ -272,14 +272,18 @@ impl Core {
     /// Gives input to Windows or takes it back. `locked` keeps Windows'
     /// edges from handing input back, for games that leave the pointer free.
     pub fn focus(&mut self, windows: bool, locked: bool) {
-        if !self.status.pbp {
-            self.show(if windows { Preset::WindowsFull } else { Preset::MacFull }, locked);
-        } else if windows {
+        if windows {
+            if self.status.preset == Preset::MacFull {
+                self.show(if self.status.pbp { Preset::Split } else { Preset::WindowsFull });
+            }
             if !self.windows_has_input() {
                 self.give_input(0.5, 0.5, locked);
             }
         } else {
             self.take_input_back(None, true);
+            if self.status.preset == Preset::WindowsFull {
+                self.show(Preset::MacFull);
+            }
         }
     }
 
@@ -393,11 +397,18 @@ impl Core {
     // ---- monitor and settings ----
 
     /// Re-reads the displays: whether the monitor is side by side, and
-    /// where Windows sits.
+    /// where Windows sits. The monitor reports neither PBP nor what each
+    /// half shows, so strait keeps what it last showed, and corrects it to
+    /// what PBP allows when the user switches PBP from the monitor's menu.
     pub fn displays_changed(&mut self) {
         let displays = screens::displays();
         let pbp = screens::is_pbp(&displays);
-        let preset = if pbp { Preset::Split } else { self.settings.preset };
+        let preset = match (pbp, self.settings.preset) {
+            (true, Preset::WindowsFull) => Preset::Split,
+            (false, Preset::Split) => Preset::MacFull,
+            (_, p) => p,
+        };
+        self.settings.preset = preset;
         self.layout = screens::layout(preset, &displays);
         self.set_status(|s| {
             s.pbp = pbp;
@@ -405,42 +416,62 @@ impl Core {
         });
     }
 
-    /// Shows one machine full screen: switches the monitor's input over DDC
-    /// and moves the keyboard and mouse with it. Side by side is the
-    /// monitor's PBP mode, which only its menu turns on.
-    pub fn show(&mut self, preset: Preset, locked: bool) {
-        let problem = match (self.status.pbp, preset) {
-            (false, Preset::Split) => Some("Turn on PBP in the monitor's menu to see both side by side"),
-            (true, Preset::MacFull | Preset::WindowsFull) => Some("PBP is on: turn it off in the monitor's menu to show one machine"),
-            _ => None,
+    /// Switches the monitor to `preset` over DDC.
+    ///
+    /// The monitor changes the half that shows the input a command arrives
+    /// on (the whole picture without PBP). The Mac sits on HDMI and Windows
+    /// on DisplayPort, so the Mac gives its HDMI half to Windows, and only
+    /// Windows can give its half back to the Mac.
+    pub fn show(&mut self, preset: Preset) {
+        use crate::settings::{MAC_INPUT, WINDOWS_INPUT};
+        enum By {
+            Mac(u16),
+            Windows(u16),
+        }
+        let by = match (self.status.pbp, preset) {
+            (true, Preset::WindowsFull) => Err("PBP is on: turn it off in the monitor's menu to show Windows full screen"),
+            (false, Preset::Split) => Err("Turn on PBP in the monitor's menu to see both side by side"),
+            (true, Preset::Split) | (false, Preset::WindowsFull) => Ok(By::Mac(WINDOWS_INPUT)),
+            (true, Preset::MacFull) => Ok(By::Windows(MAC_INPUT)),
+            (false, Preset::MacFull) => Ok(By::Mac(MAC_INPUT)),
         };
-        if let Some(problem) = problem {
-            self.set_status(|s| s.problem = Some(problem.to_owned()));
+        let by = match by {
+            Ok(by) => by,
+            Err(problem) => {
+                self.set_status(|s| s.problem = Some(problem.to_owned()));
+                return;
+            }
+        };
+        if preset == self.status.preset {
             return;
         }
-        if preset == Preset::Split {
-            return;
-        }
+        // A second command from the same side would change the other half.
         self.settings.preset = preset;
         self.settings.save(&self.settings_path);
         self.displays_changed();
-        match preset {
-            Preset::WindowsFull if !self.windows_has_input() => self.give_input(0.5, 0.5, locked),
-            Preset::MacFull => self.take_input_back(None, true),
-            _ => {}
+        if preset == Preset::MacFull {
+            self.take_input_back(None, true);
         }
-        let source = if preset == Preset::WindowsFull { crate::settings::WINDOWS_INPUT } else { crate::settings::MAC_INPUT };
-        let me = self.me.clone();
-        std::thread::spawn(move || {
-            let ok = ddc::Monitor::find().is_some_and(|mut m| m.write(ddc::INPUT_SOURCE, source));
-            crate::log(&format!("monitor input {source:#04x}: {}", if ok { "switched" } else { "no DDC answer" }));
-            if let Some(core) = me.upgrade() {
-                core.lock().unwrap().set_status(|s| {
-                    s.monitor = ok;
-                    s.problem = (!ok).then(|| "The monitor did not answer DDC".to_owned());
+        match by {
+            By::Windows(source) => {
+                crate::log(&format!("asking Windows to select monitor input {source:#04x}"));
+                self.send_control(Control::Select(source));
+                self.set_status(|s| s.problem = None);
+            }
+            By::Mac(source) => {
+                let me = self.me.clone();
+                std::thread::spawn(move || {
+                    let ok = ddc::Monitor::find().is_some_and(|mut m| m.write(ddc::INPUT_SOURCE, source));
+                    crate::log(&format!("monitor input {source:#04x}: {}", if ok { "switched" } else { "no DDC answer" }));
+                    if let Some(core) = me.upgrade() {
+                        core.lock().unwrap().set_status(|s| {
+                            s.monitor = ok;
+                            s.problem = (!ok).then(|| "The monitor did not answer DDC".to_owned());
+                        });
+                    }
                 });
             }
-        });
+        }
     }
 
     pub fn set_swap(&mut self, on: bool) {

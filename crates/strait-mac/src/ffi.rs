@@ -137,7 +137,7 @@ pub extern "C" fn strait_command(json: *const c_char) {
     };
     match command {
         Command::Preset(name) => match preset_named(&name) {
-            Some(p) => engine.core.lock().unwrap().show(p, false),
+            Some(p) => engine.core.lock().unwrap().show(p),
             None => log(&format!("unknown preset {name}")),
         },
         Command::SwapCommandControl(on) => engine.core.lock().unwrap().set_swap(on),

@@ -8,6 +8,9 @@ use windows_sys::Win32::Devices::Display::{
 use windows_sys::Win32::Foundation::{BOOL, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 
+/// VCP feature: input source.
+pub const INPUT_SOURCE: u8 = 0x60;
+
 /// Every physical monitor Windows drives, released when dropped.
 struct Physical(Vec<PHYSICAL_MONITOR>);
 
