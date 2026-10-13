@@ -74,6 +74,8 @@ pub struct Status {
     /// menu can turn on or off.
     pub pbp: bool,
     pub monitor: bool,
+    /// Whether the external displays show HDR; None when none can.
+    pub hdr: Option<bool>,
     pub rtt_ms: Option<f64>,
     pub accessibility: bool,
     pub input_monitoring: bool,
@@ -144,6 +146,7 @@ impl Core {
             preset: settings.preset,
             pbp: false,
             monitor: false,
+            hdr: screens::hdr_on(),
             rtt_ms: None,
             accessibility: false,
             input_monitoring: false,
@@ -499,6 +502,18 @@ impl Core {
                 });
             }
         }
+    }
+
+    /// Switching HDR blanks the monitor for a moment, so it runs off the
+    /// engine's lock.
+    pub fn set_hdr(&mut self, on: bool) {
+        let me = self.me.clone();
+        std::thread::spawn(move || {
+            screens::set_hdr(on);
+            if let Some(core) = me.upgrade() {
+                core.lock().unwrap().set_status(|s| s.hdr = screens::hdr_on());
+            }
+        });
     }
 
     pub fn set_swap(&mut self, on: bool) {

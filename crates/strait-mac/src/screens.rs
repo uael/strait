@@ -11,15 +11,19 @@ pub struct Display {
     pub builtin: bool,
 }
 
-pub fn displays() -> Vec<Display> {
+fn active() -> Vec<CGDirectDisplayID> {
     let mut ids = [0u32; 16];
     let mut count = 0;
     if unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) } != 0 {
         return Vec::new();
     }
-    ids[..count as usize]
-        .iter()
-        .map(|&id| {
+    ids[..count as usize].to_vec()
+}
+
+pub fn displays() -> Vec<Display> {
+    active()
+        .into_iter()
+        .map(|id| {
             let b = unsafe { CGDisplayBounds(id) };
             Display {
                 bounds: Rect { x: b.origin.x, y: b.origin.y, w: b.size.width, h: b.size.height },
@@ -74,6 +78,27 @@ fn bounding(rects: &[Rect]) -> Option<Rect> {
         y1 = y1.max(r.bottom());
     }
     Some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+}
+
+/// The external displays that can show HDR.
+fn hdr_capable(hdr: &Hdr) -> Vec<CGDirectDisplayID> {
+    active().into_iter().filter(|&id| unsafe { CGDisplayIsBuiltin(id) } == 0 && (hdr.supported)(id)).collect()
+}
+
+/// Whether the external displays show HDR; None when none can.
+pub fn hdr_on() -> Option<bool> {
+    let hdr = hdr()?;
+    let capable = hdr_capable(hdr);
+    (!capable.is_empty()).then(|| capable.iter().all(|&id| (hdr.enabled)(id)))
+}
+
+/// Turns HDR on or off on every external display that can show it.
+pub fn set_hdr(on: bool) {
+    let Some(hdr) = hdr() else { return };
+    for id in hdr_capable(hdr) {
+        let error = (hdr.set)(id, on, 0, 0);
+        crate::log(&format!("HDR {} on display {id}{}", if on { "on" } else { "off" }, if error == 0 { String::new() } else { format!(": error {error}") }));
+    }
 }
 
 /// The Mac pointer's position now.

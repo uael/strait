@@ -19,6 +19,9 @@ struct MenuView: View {
                         Slider(value: Binding(get: { status.pointerSpeed }, set: { engine.pointerSpeed($0) }), in: 0.1...2.0)
                             .controlSize(.small)
                     }
+                    if let hdr = status.hdr {
+                        Toggle("HDR on the monitor", isOn: Binding(get: { hdr }, set: { engine.hdr($0) }))
+                    }
                     Toggle("Type Windows shortcuts with ⌘", isOn: Binding(
                         get: { status.swapCommandControl },
                         set: { engine.swapCommandControl($0) }

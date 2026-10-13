@@ -1,6 +1,6 @@
 //! macOS functions strait calls that have no Rust crate it depends on:
-//! Core Graphics events and displays, IOKit HID, DDC over IOAVService, and
-//! two Objective-C entry points.
+//! Core Graphics events and displays, IOKit HID, DDC over IOAVService,
+//! display HDR through SkyLight, and two Objective-C entry points.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -231,6 +231,35 @@ pub fn allow_background_cursor_hiding() {
         let cid = _CGSDefaultConnection();
         CGSSetConnectionProperty(cid, cid, key.0, core_foundation_sys::number::kCFBooleanTrue.cast());
     }
+}
+
+/// SkyLight's private HDR calls, found at run time: a macOS that lacks them
+/// leaves HDR to System Settings instead of failing to load strait.
+pub struct Hdr {
+    pub supported: DisplayQuery,
+    pub enabled: DisplayQuery,
+    pub set: SetHdr,
+}
+
+pub type DisplayQuery = extern "C" fn(CGDirectDisplayID) -> bool;
+/// The two trailing arguments are undocumented; 0 and 0 switch HDR on macOS 26.
+pub type SetHdr = extern "C" fn(CGDirectDisplayID, bool, i32, i32) -> i32;
+
+pub fn hdr() -> Option<&'static Hdr> {
+    static HDR: std::sync::OnceLock<Option<Hdr>> = std::sync::OnceLock::new();
+    HDR.get_or_init(|| unsafe {
+        let sky = libc::dlopen(c"/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight".as_ptr(), libc::RTLD_NOW);
+        if sky.is_null() {
+            return None;
+        }
+        let find = |name: &std::ffi::CStr| Some(libc::dlsym(sky, name.as_ptr())).filter(|f| !f.is_null());
+        Some(Hdr {
+            supported: std::mem::transmute::<*mut c_void, DisplayQuery>(find(c"SLSDisplaySupportsHDRMode")?),
+            enabled: std::mem::transmute::<*mut c_void, DisplayQuery>(find(c"SLSDisplayIsHDRModeEnabled")?),
+            set: std::mem::transmute::<*mut c_void, SetHdr>(find(c"SLSDisplaySetHDRModeEnabled")?),
+        })
+    })
+    .as_ref()
 }
 
 pub fn c_string(s: &str) -> CString {

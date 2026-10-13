@@ -82,8 +82,8 @@ pub extern "C" fn strait_start(dir: *const c_char, on_status: StatusFn, on_clipb
 /// The watch loop reads the monitor's input every this many seconds.
 const MONITOR_EVERY: u32 = 3;
 
-/// Follows permissions and Secure Input, and starts capture once macOS
-/// allows it.
+/// Follows permissions, Secure Input and HDR, and starts capture once
+/// macOS allows it.
 fn watch(core: Shared) {
     let mut capturing = false;
     let mut tick = 0u32;
@@ -99,6 +99,8 @@ fn watch(core: Shared) {
         let accessibility = unsafe { AXIsProcessTrusted() };
         let input_monitoring = unsafe { IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) } == kIOHIDAccessTypeGranted;
         let secure_input = unsafe { IsSecureEventInputEnabled() };
+        // System Settings switches HDR too.
+        let hdr = crate::screens::hdr_on();
         let mut problem = None;
         if !capturing && accessibility {
             match capture::start(core.clone()) {
@@ -110,6 +112,7 @@ fn watch(core: Shared) {
             s.accessibility = accessibility;
             s.input_monitoring = input_monitoring;
             s.secure_input = secure_input;
+            s.hdr = hdr;
             if problem.is_some() {
                 s.problem = problem;
             }
@@ -126,6 +129,8 @@ enum Command {
     /// "windows" gives input to Windows, locked; "mac" takes it back.
     Focus(String),
     PointerSpeed(f64),
+    /// HDR on the external displays that can show it.
+    Hdr(bool),
     Forget(bool),
     Host(Option<String>),
     /// Publishes the status now, for a view that just appeared.
@@ -155,6 +160,7 @@ pub extern "C" fn strait_command(json: *const c_char) {
         Command::SwapCommandControl(on) => engine.core.lock().unwrap().set_swap(on),
         Command::Focus(to) => engine.core.lock().unwrap().focus(to == "windows", true),
         Command::PointerSpeed(speed) => engine.core.lock().unwrap().set_pointer_speed(speed),
+        Command::Hdr(on) => engine.core.lock().unwrap().set_hdr(on),
         Command::Forget(true) => engine.core.lock().unwrap().forget(&engine.peer_path),
         Command::Host(host) => engine.core.lock().unwrap().set_host(host.filter(|h| !h.trim().is_empty())),
         Command::Refresh(true) => engine.core.lock().unwrap().publish(),

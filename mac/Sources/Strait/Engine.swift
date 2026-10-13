@@ -24,6 +24,8 @@ struct Status: Decodable, Equatable {
     var preset: Preset
     var pbp: Bool
     var monitor: Bool
+    /// HDR on the external displays; nil when none can show it.
+    var hdr: Bool?
     var rttMs: Double?
     var accessibility: Bool
     var inputMonitoring: Bool
@@ -98,5 +100,6 @@ final class Engine: ObservableObject {
     func focus(windows: Bool) { send(["focus": windows ? "windows" : "mac"]) }
     func swapCommandControl(_ on: Bool) { send(["swapCommandControl": on]) }
     func pointerSpeed(_ speed: Double) { send(["pointerSpeed": speed]) }
+    func hdr(_ on: Bool) { send(["hdr": on]) }
     func forgetPC() { send(["forget": true]) }
 }
