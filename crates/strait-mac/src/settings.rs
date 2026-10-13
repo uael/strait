@@ -32,7 +32,12 @@ impl Settings {
     pub fn load(path: &Path) -> Settings {
         let stored: Stored = std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         Settings {
-            preset: stored.preset.as_deref().and_then(preset_named).unwrap_or(Preset::MacFull),
+            // Only a full-screen choice is remembered; side by side follows
+            // the monitor's PBP mode.
+            preset: match stored.preset.as_deref().and_then(preset_named) {
+                Some(Preset::WindowsFull) => Preset::WindowsFull,
+                _ => Preset::MacFull,
+            },
             swap_command_control: stored.swap_command_control,
             host: stored.host,
         }

@@ -1,3 +1,4 @@
+import ApplicationServices
 import IOKit.hid
 import SwiftUI
 
@@ -100,7 +101,10 @@ private struct Notices: View {
         VStack(spacing: 6) {
             if !status.accessibility {
                 Notice(symbol: "hand.raised.fill", text: "Allow strait in Accessibility to share your keyboard and mouse.",
-                       action: "Open Settings") {
+                       action: "Allow") {
+                    // Asking through the API adds strait to the list, with this build's signature.
+                    let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+                    _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
                     open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
                 }
             }
