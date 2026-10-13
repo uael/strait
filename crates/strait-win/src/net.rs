@@ -88,8 +88,7 @@ impl Net {
         std::thread::spawn(move || n.listen());
         let n = net.clone();
         std::thread::spawn(move || n.datagrams());
-        let public = net.identity.public;
-        std::thread::spawn(move || beacon(public));
+        announce(net.identity.public);
         net
     }
 
@@ -315,38 +314,51 @@ impl Net {
     }
 }
 
-/// Announces this PC on the local network so the Mac finds it without
-/// configuration. The key lets the Mac recognize its paired PC.
-fn beacon(public: [u8; 32]) {
-    let message = strait::beacon(&public);
-    let mut failing = false;
-    loop {
-        // Windows sends a broadcast from an unbound socket through whichever
-        // adapter it likes, often a link-local one; binding to the address of
-        // the default route's adapter sends it onto the LAN. That address can
-        // change, so it is looked up for each beacon.
-        let sent = default_route_address()
-            .and_then(|ip| UdpSocket::bind((ip, 0)))
-            .and_then(|s| s.set_broadcast(true).map(|()| s))
-            .and_then(|s| s.send_to(&message, ("255.255.255.255", strait::BEACON_PORT)));
-        match sent {
-            Ok(_) => failing = false,
-            Err(e) if !failing => {
-                log!("send beacon: {e}");
-                failing = true;
-            }
-            Err(_) => {}
-        }
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
+/// Publishes this PC as a Bonjour service so the Mac finds it without
+/// configuration. Windows keeps answering for it while the process lives.
+fn announce(public: [u8; 32]) {
+    use windows_sys::Win32::NetworkManagement::Dns::{
+        DNS_QUERY_REQUEST_VERSION1, DNS_SERVICE_CANCEL, DNS_SERVICE_INSTANCE, DNS_SERVICE_REGISTER_REQUEST,
+        DnsServiceConstructInstance, DnsServiceRegister,
+    };
 
-/// Local address Windows would use to reach the internet. Connecting a UDP
-/// socket only picks the route; it sends nothing.
-fn default_route_address() -> io::Result<IpAddr> {
-    let probe = UdpSocket::bind(("0.0.0.0", 0))?;
-    probe.connect(("192.0.2.1", 9))?;
-    Ok(probe.local_addr()?.ip())
+    unsafe extern "system" fn registered(status: u32, _context: *const std::ffi::c_void, _instance: *const DNS_SERVICE_INSTANCE) {
+        if status == 0 {
+            log!("published {} on the local network", strait::SERVICE_TYPE);
+        } else {
+            log!("publishing {} failed: error {status}", strait::SERVICE_TYPE);
+        }
+    }
+
+    let wide = |s: &str| -> &'static [u16] { Box::leak(s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>().into_boxed_slice()) };
+    let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows".to_owned());
+    let service = wide(&format!("{computer}.{}.local", strait::SERVICE_TYPE));
+    let host = wide(&format!("{computer}.local"));
+    let keys = [wide(strait::SERVICE_KEY).as_ptr()];
+    let values = [wide(&strait::to_hex(&public)).as_ptr()];
+    // The request and what it points to must outlive the registration,
+    // which lasts as long as the process.
+    let instance = unsafe {
+        DnsServiceConstructInstance(service.as_ptr(), host.as_ptr(), std::ptr::null(), std::ptr::null(), strait::PORT, 0, 0, 1, keys.as_ptr(), values.as_ptr())
+    };
+    if instance.is_null() {
+        log!("could not describe the {} service", strait::SERVICE_TYPE);
+        return;
+    }
+    let request: &'static DNS_SERVICE_REGISTER_REQUEST = Box::leak(Box::new(DNS_SERVICE_REGISTER_REQUEST {
+        Version: DNS_QUERY_REQUEST_VERSION1,
+        InterfaceIndex: 0,
+        pServiceInstance: instance,
+        pRegisterCompletionCallback: Some(registered),
+        pQueryContext: std::ptr::null_mut(),
+        hCredentials: std::ptr::null_mut(),
+        unicastEnabled: 0,
+    }));
+    let cancel: &'static mut DNS_SERVICE_CANCEL = Box::leak(Box::new(DNS_SERVICE_CANCEL { reserved: std::ptr::null_mut() }));
+    let status = unsafe { DnsServiceRegister(request, cancel) };
+    if status != windows_sys::Win32::Foundation::DNS_REQUEST_PENDING as u32 {
+        log!("DnsServiceRegister failed: error {status}");
+    }
 }
 
 fn virtual_screen() -> RECT {

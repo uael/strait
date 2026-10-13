@@ -5,6 +5,8 @@
 //! with clipboard contents from Windows.
 
 #[cfg(target_os = "macos")]
+mod bonjour;
+#[cfg(target_os = "macos")]
 mod capture;
 #[cfg(target_os = "macos")]
 mod core;

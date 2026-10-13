@@ -9,32 +9,34 @@ pub mod wire;
 
 /// TCP port of the session and UDP port of input datagrams, on Windows.
 pub const PORT: u16 = 47800;
-/// UDP port where Windows broadcasts its beacon.
-pub const BEACON_PORT: u16 = 47801;
+/// Bonjour service type Windows publishes, so the Mac finds it with no
+/// configuration. Its TXT record `key` holds the PC's public key in hex,
+/// which lets the Mac recognize its paired PC.
+pub const SERVICE_TYPE: &str = "_strait._tcp";
+pub const SERVICE_KEY: &str = "key";
 
-const BEACON_MAGIC: &[u8; 8] = b"strait/1";
-
-/// The beacon Windows broadcasts: a magic tag and its public key.
-pub fn beacon(public: &[u8; 32]) -> [u8; 40] {
-    let mut b = [0; 40];
-    b[..8].copy_from_slice(BEACON_MAGIC);
-    b[8..].copy_from_slice(public);
-    b
+pub fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The public key a beacon announces, if `bytes` is one.
-pub fn parse_beacon(bytes: &[u8]) -> Option<[u8; 32]> {
-    let rest = bytes.strip_prefix(BEACON_MAGIC)?;
-    rest.try_into().ok()
+pub fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 || !hex.is_ascii() {
+        return None;
+    }
+    let mut key = [0; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(key)
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn beacon_round_trips() {
-        let key = [7; 32];
-        assert_eq!(super::parse_beacon(&super::beacon(&key)), Some(key));
-        assert_eq!(super::parse_beacon(b"strait/2"), None);
-        assert_eq!(super::parse_beacon(&super::beacon(&key)[..39]), None);
+    fn keys_round_trip_through_hex() {
+        let key: [u8; 32] = std::array::from_fn(|i| i as u8 * 7);
+        assert_eq!(super::key_from_hex(&super::to_hex(&key)), Some(key));
+        assert_eq!(super::key_from_hex("zz"), None);
+        assert_eq!(super::key_from_hex(&"g".repeat(64)), None);
     }
 }

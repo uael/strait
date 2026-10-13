@@ -39,6 +39,8 @@ build() {
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>strait finds your Windows PC and sends it your keyboard and mouse over the local network.</string>
+  <key>NSBonjourServices</key><array><string>_strait._tcp</string></array>
   <key>NSHumanReadableCopyright</key><string>Shares this Mac's keyboard, mouse and clipboard with a Windows PC.</string>
 </dict>
 </plist>

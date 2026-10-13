@@ -1,7 +1,7 @@
 //! Finds the PC, keeps a session with it, and measures the round trip.
 
 use std::io::{BufReader, BufWriter};
-use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -23,13 +23,13 @@ fn now_ns() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_nanos() as u64
 }
 
-/// The PC most recently heard announcing itself.
-type Heard = Arc<Mutex<Option<(IpAddr, [u8; 32])>>>;
+/// The PC most recently found on the network: its host name and key.
+pub type Heard = Arc<Mutex<Option<(String, [u8; 32])>>>;
 
 pub fn start(core: Shared, identity: Identity, peer_path: PathBuf) {
     let heard: Heard = Arc::default();
     let h = heard.clone();
-    std::thread::Builder::new().name("beacon".into()).spawn(move || listen_beacons(h)).expect("spawn beacon thread");
+    std::thread::Builder::new().name("discovery".into()).spawn(move || crate::bonjour::browse(h)).expect("spawn discovery thread");
     std::thread::Builder::new()
         .name("link".into())
         .spawn(move || loop {
@@ -39,24 +39,6 @@ pub fn start(core: Shared, identity: Identity, peer_path: PathBuf) {
             std::thread::sleep(Duration::from_secs(1));
         })
         .expect("spawn link thread");
-}
-
-fn listen_beacons(heard: Heard) {
-    let socket = match UdpSocket::bind(("0.0.0.0", strait::BEACON_PORT)) {
-        Ok(s) => s,
-        Err(e) => {
-            log(&format!("listen for beacons on port {}: {e}", strait::BEACON_PORT));
-            return;
-        }
-    };
-    let mut buf = [0u8; 64];
-    loop {
-        if let Ok((n, from)) = socket.recv_from(&mut buf)
-            && let Some(key) = strait::parse_beacon(&buf[..n])
-        {
-            *heard.lock().unwrap() = Some((from.ip(), key));
-        }
-    }
 }
 
 pub fn paired(peer_path: &PathBuf) -> Option<[u8; 32]> {
@@ -71,11 +53,23 @@ fn target(core: &Shared, peer_path: &PathBuf, heard: &Heard) -> Option<(String, 
         let addr = (host.as_str(), strait::PORT).to_socket_addrs().ok()?.next()?;
         return Some((host, addr));
     }
-    let (ip, key) = (*heard.lock().unwrap())?;
+    let (host, key) = heard.lock().unwrap().clone()?;
     if paired(peer_path).is_some_and(|p| p != key) {
         return None;
     }
-    Some((ip.to_string(), SocketAddr::new(ip, strait::PORT)))
+    // Resolved for each attempt, so a new address from DHCP is picked up.
+    let addr = match (host.as_str(), strait::PORT).to_socket_addrs().map(|mut a| a.find(SocketAddr::is_ipv4)) {
+        Ok(Some(addr)) => addr,
+        Ok(None) => {
+            log(&format!("{host} has no IPv4 address"));
+            return None;
+        }
+        Err(e) => {
+            log(&format!("resolve {host}: {e}"));
+            return None;
+        }
+    };
+    Some((host.trim_end_matches('.').to_owned(), addr))
 }
 
 fn connect(core: &Shared, identity: &Identity, peer_path: &PathBuf, heard: &Heard) -> std::io::Result<()> {

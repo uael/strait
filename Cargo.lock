@@ -465,6 +465,7 @@ name = "strait-mac"
 version = "0.1.0"
 dependencies = [
  "core-foundation-sys",
+ "libc",
  "serde",
  "serde_json",
  "strait",
