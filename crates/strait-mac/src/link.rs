@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use strait::session::{Identity, Session, fingerprint};
 use strait::wire::{Control, Input};
 
-use crate::core::{Core, Link, Shared, Uplink};
+use crate::core::{Link, Shared, Uplink};
 use crate::log;
 
 /// How often Windows learns what is held while it has input.
@@ -122,7 +122,7 @@ fn connect(core: &Shared, identity: &Identity, peer_path: &PathBuf, heard: &Hear
     let end = loop {
         match reader.recv() {
             Ok(Control::Exit { edge, along }) => core.lock().unwrap().exit(edge, along),
-            Ok(Control::Show(preset)) => Core::set_preset(core, preset),
+            Ok(Control::Show(preset)) => core.lock().unwrap().show(preset),
             Ok(Control::Clipboard(clip)) => core.lock().unwrap().clipboard_from_windows(&clip),
             Ok(other) => log(&format!("unexpected control from the PC: {other:?}")),
             Err(e) => break e,

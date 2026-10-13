@@ -56,6 +56,14 @@ pub fn layout(preset: Preset, displays: &[Display]) -> Layout {
     }
 }
 
+/// Whether the monitor shows two inputs side by side: the Mac then has two
+/// external displays (both monitor inputs), or one of half the monitor's
+/// width. The monitor is 32:9; each half is 16:9.
+pub fn is_pbp(displays: &[Display]) -> bool {
+    let external: Vec<&Display> = displays.iter().filter(|d| !d.builtin).collect();
+    external.len() >= 2 || external.iter().any(|d| d.bounds.w / d.bounds.h < 2.5)
+}
+
 fn bounding(rects: &[Rect]) -> Option<Rect> {
     let first = rects.first()?;
     let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.right(), first.bottom());
@@ -106,6 +114,10 @@ mod tests {
         let split = layout(Preset::Split, &[builtin, half]);
         assert_eq!(split.windows, Some(Rect { x: 2560.0, y: 0.0, w: 2560.0, h: 1440.0 }));
         assert_eq!(split.visible.len(), 2);
+
+        assert!(!is_pbp(&[builtin, wide]));
+        assert!(is_pbp(&[builtin, half]));
+        assert!(!is_pbp(&[builtin]));
 
         let right = d(2560.0, 0.0, 2560.0, 1440.0, false);
         let two = layout(Preset::Split, &[right, builtin, half]);

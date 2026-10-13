@@ -30,7 +30,6 @@ const WM_TRAY: u32 = WM_APP + 1;
 const WM_NET: u32 = WM_APP + 2;
 
 const CMD_SHOW_MAC: usize = 10;
-const CMD_SHOW_SPLIT: usize = 11;
 const CMD_SHOW_WINDOWS: usize = 12;
 const CMD_FORGET: usize = 20;
 const CMD_LOG: usize = 30;
@@ -256,11 +255,7 @@ fn menu() {
         let m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING | MF_GRAYED, 1, wide(&status_line(&status, paired)).as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
-        for (cmd, label) in [
-            (CMD_SHOW_MAC, "Monitor: Mac"),
-            (CMD_SHOW_SPLIT, "Monitor: Mac + Windows"),
-            (CMD_SHOW_WINDOWS, "Monitor: Windows"),
-        ] {
+        for (cmd, label) in [(CMD_SHOW_MAC, "Show the Mac"), (CMD_SHOW_WINDOWS, "Show Windows")] {
             AppendMenuW(m, enabled(connected), cmd, wide(label).as_ptr());
         }
         AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
@@ -279,7 +274,6 @@ fn menu() {
 fn command(cmd: usize) {
     match cmd {
         CMD_SHOW_MAC => net().send(Control::Show(Preset::MacFull)),
-        CMD_SHOW_SPLIT => net().send(Control::Show(Preset::Split)),
         CMD_SHOW_WINDOWS => net().send(Control::Show(Preset::WindowsFull)),
         CMD_FORGET => net().forget(),
         CMD_LOG => unsafe {

@@ -3,7 +3,7 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -69,7 +69,7 @@ pub extern "C" fn strait_start(dir: *const c_char, on_status: StatusFn, on_clipb
         }
     });
     let paired = link::paired(&peer_path).map(|k| fingerprint(&k));
-    let core: Shared = Arc::new(Mutex::new(Core::new(dir.join("settings.json"), fingerprint(&identity.public), paired, notify, clipboard)));
+    let core: Shared = Core::shared(dir.join("settings.json"), fingerprint(&identity.public), paired, notify, clipboard);
     let _ = ENGINE.set(Engine { core: core.clone(), peer_path: peer_path.clone() });
     log(&format!("strait {} started; this Mac is {}", env!("CARGO_PKG_VERSION"), fingerprint(&identity.public)));
     allow_background_cursor_hiding();
@@ -135,7 +135,7 @@ pub extern "C" fn strait_command(json: *const c_char) {
     };
     match command {
         Command::Preset(name) => match preset_named(&name) {
-            Some(p) => Core::set_preset(&engine.core, p),
+            Some(p) => engine.core.lock().unwrap().show(p),
             None => log(&format!("unknown preset {name}")),
         },
         Command::SwapCommandControl(on) => engine.core.lock().unwrap().set_swap(on),

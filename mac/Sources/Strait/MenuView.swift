@@ -158,8 +158,10 @@ private struct InputPicker: View {
                  selected: status.focus != .mac) { engine.focus(windows: true) }
                 .disabled(!connected)
         }
-        Text("⌃⌥⌘ Space switches. Windows keeps input until you press it again.")
-            .font(.caption2).foregroundStyle(.secondary)
+        Text(status.pbp
+             ? "⌃⌥⌘ Space moves the keyboard and mouse. Windows keeps them until you press it again."
+             : "⌃⌥⌘ Space switches the keyboard, mouse and screen, like a KVM.")
+            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -173,12 +175,14 @@ private struct PresetPicker: View {
                 Tile(title: title(preset), drawing: AnyView(MonitorDrawing(preset: preset)), selected: status.preset == preset) {
                     engine.choose(preset)
                 }
+                // Side by side is the monitor's PBP mode, which only its menu switches.
+                .disabled((preset == .split) != status.pbp)
             }
         }
-        if status.preset == .split {
-            Text("Side by side uses the monitor's PBP mode: turn it on from the monitor's menu.")
-                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
+        Text(status.pbp
+             ? "PBP is on. Turn it off in the monitor's menu to show one machine full screen."
+             : "For side by side, turn on PBP in the monitor's menu.")
+            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
     private func title(_ p: Status.Preset) -> String {

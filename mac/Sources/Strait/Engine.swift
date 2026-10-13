@@ -22,6 +22,7 @@ struct Status: Decodable, Equatable {
     var link: Link
     var focus: Focus
     var preset: Preset
+    var pbp: Bool
     var monitor: Bool
     var rttMs: Double?
     var accessibility: Bool
